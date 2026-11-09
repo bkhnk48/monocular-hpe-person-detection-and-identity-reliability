@@ -1,0 +1,105 @@
+project:
+  name: pose_assoc_framework
+  version: "0.1.0"
+  random_seed: 42
+
+data:
+  dataset: mpi_inf_3dhp
+  sequence: S8_Seq1_video_cam0
+
+  gt_file: data/raw/mpi_inf_3dhp/ground_truth/S8_Seq1_video_cam0.csv
+  detections_file: data/raw/mpi_inf_3dhp/wham_predictions/RA-WHAM_S8_Seq1_video_cam0.csv
+
+  processed_dir: data/processed/pose_assoc
+
+gt:
+  frame_column: frame
+  person_id_column: person_id
+  camera_column: camera
+  camera_value: 0
+
+  allow_single_person_fallback: true
+  fallback_person_id: 0
+
+  coordinate_unit: mm
+
+detections:
+  frame_column: frame_id
+  detection_id_column: body_id
+
+  coordinate_unit: m
+
+joints:
+  shared:
+    - left_shoulder
+    - right_shoulder
+    - left_elbow
+    - right_elbow
+    - left_wrist
+    - right_wrist
+    - left_hip
+    - right_hip
+    - left_knee
+    - right_knee
+    - left_ankle
+    - right_ankle
+
+validation:
+  min_valid_joints_per_pose: 8
+  check_duplicate_gt_identity_per_frame: true
+  check_duplicate_detection_per_frame: true
+
+association:
+  weights:
+    pose: 1.0
+    temporal: 0.5
+
+  costs:
+    false_positive: 0.8
+    false_negative: 1.0
+    disappear: 0.15
+    reappear: 0.20
+
+  scales:
+    pose_mm: 100.0
+    motion_m: 0.05
+
+  boundary:
+    start_detected: 0.0
+    start_missed: 0.0
+    end_detected: 0.0
+    end_missed: 0.0
+
+solvers:
+  enabled:
+    - greedy
+    - hungarian
+    - temporal_dp
+    - single_mcf
+    - multi_mcf
+
+  multi_mcf:
+    backend: pulp
+
+evaluation:
+  metrics:
+    - precision
+    - recall
+    - f1
+    - idf1
+    - id_switches
+    - matched_gt_frames
+    - unmatched_gt_frames
+    - unmatched_detections
+    - false_positives_per_frame
+    - mpjpe
+    - pa_mpjpe
+    - runtime
+    - peak_memory
+
+experiments:
+  output_dir: outputs/runs
+  summary_dir: outputs/summaries
+  save_assignments: true
+  save_frame_metrics: true
+  save_config: true

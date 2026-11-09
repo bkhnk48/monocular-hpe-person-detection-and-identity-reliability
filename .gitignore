@@ -32,3 +32,25 @@ outputs/*
 !outputs/assignments/.gitkeep
 !outputs/metrics/.gitkeep
 !outputs/visualizations/.gitkeep
+
+
+
+# Experiment outputs
+/outputs/runs/*
+!/outputs/runs/.gitkeep
+
+/outputs/summaries/*
+!/outputs/summaries/.gitkeep
+
+# Local video files
+/video_cam0.avi
+
+# Moi truong Python
+.ven/
+
+# Cau hinh preview cua Claude (rieng tung may)
+scripts/.claude/
+
+# Cong cu gan nhan theo frame (chua dung)
+scripts/label_reference_server.py
+scripts/build_reference_candidates.py

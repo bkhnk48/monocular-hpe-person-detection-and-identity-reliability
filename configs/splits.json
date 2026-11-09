@@ -1,0 +1,73 @@
+{
+  "_ghi_chu": [
+    "Manifest các sequence cho chương trình scripts/wham_gt_mapping.py.",
+    "Đường dẫn tương đối tính từ base_dir; base_dir tương đối tính từ thư mục chứa file này.",
+    "gt.type = 'mpi' (annot.mat, 1 người) hoặc 'harmony4d' (thư mục poses3d/*.npy).",
+    "overlay_video: video WHAM vẽ đè lên video gốc (output_*.mp4). Bỏ trống nếu không có -> ghép 2 video.",
+    "fps chỉ dùng khi không có overlay_video; nếu có overlay thì lấy fps của overlay để 3 video khớp frame.",
+    "Chuyển một mục giữa 'validation' và 'test' bằng cách cắt/dán nguyên khối { ... }."
+  ],
+  "base_dir": "../..",
+  "smpl_model": "WHAM/dataset/body_models/smpl/SMPL_NEUTRAL.pkl",
+  "output_dir": "monocular-hpe-person-detection-and-identity-reliability/outputs/mapping",
+
+  "validation": [
+    {
+      "name": "mpi_S8_Seq1_cam0",
+      "wham_pkl": "ray_casting/inputs/datasets/mpi_inf_3dhpe/S8/Seq1/imageSequences/wham_video_0.pkl",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+        "camera": 0,
+        "person": "S8"
+      },
+      "overlay_video": "",
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam8",
+      "wham_pkl": "WHAM/output/demo/video_cam8/wham_video_cam8.pkl",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+        "camera": 8,
+        "person": "S8"
+      },
+      "overlay_video": "WHAM/output/demo/video_cam8/output_video_cam8.mp4",
+      "fps": 25
+    }
+  ],
+
+  "test": [
+    {
+      "name": "h4d_041_grappling2_cam07",
+      "wham_pkl": "WHAM/output/demo/harmony4D_041_grappling2_cam07_ffmpeg/wham_harmony4D_041_grappling2_cam07_ffmpeg.pkl",
+      "gt": {
+        "type": "harmony4d",
+        "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
+      },
+      "overlay_video": "WHAM/output/demo/harmony4D_041_grappling2_cam07_ffmpeg/output_harmony4D_041_grappling2_cam07_ffmpeg.mp4",
+      "fps": 20
+    },
+    {
+      "name": "h4d_041_grappling2_cam01",
+      "wham_pkl": "WHAM/output/demo/harmony4D_041_grappling2_cam01_ffmpeg/wham_harmony4D_041_grappling2_cam01_ffmpeg.pkl",
+      "gt": {
+        "type": "harmony4d",
+        "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
+      },
+      "overlay_video": "",
+      "fps": 20
+    },
+    {
+      "name": "h4d_002_hugging_cam22",
+      "wham_pkl": "optimization_model_monocular_3/inputs/harmony4D/test_set/isolated/wham_harmony4D_002_hugging_cam22_ffmpeg.pkl",
+      "gt": {
+        "type": "harmony4d",
+        "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/isolated/poses3d of 002_hugging"
+      },
+      "overlay_video": "",
+      "fps": 20
+    }
+  ]
+}
