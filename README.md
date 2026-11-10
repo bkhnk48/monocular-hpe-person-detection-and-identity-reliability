@@ -1,281 +1,260 @@
-# Monocular HPE: Person Detection and Identity Reliability
+# Monocular HPE: Phát hiện người và độ tin cậy của định danh
 
-Research project investigating person detection errors and identity inconsistency in monocular 3D Human Pose Estimation (HPE) models, with a focus on WHAM and the development of a Multi-Commodity Min-Cost Flow (MC-MCF) framework.
+Dự án nghiên cứu các lỗi phát hiện người và sự không nhất quán về định danh trong các mô hình ước lượng tư thế người 3D từ video đơn camera (Monocular 3D Human Pose Estimation – HPE). Dự án tập trung khảo sát mô hình WHAM và phát triển một khuôn khổ tối ưu hóa luồng chi phí cực tiểu đa hàng hóa (Multi-Commodity Min-Cost Flow – MC-MCF).
 
-## 1. Research Motivation
+## 1. Động cơ nghiên cứu
 
-Monocular 3D Human Pose Estimation models estimate 3D human poses from video sequences. However, their outputs may contain errors that are not adequately described by conventional pose estimation metrics such as MPJPE or PA-MPJPE.
+Các mô hình Monocular 3D Human Pose Estimation ước lượng tư thế người trong không gian 3D từ các chuỗi video. Tuy nhiên, kết quả dự đoán của những mô hình này có thể chứa các sai sót mà những chỉ số đánh giá tư thế truyền thống như MPJPE hoặc PA-MPJPE chưa phản ánh đầy đủ.
 
-In multi-person scenarios, a model may:
+Trong các tình huống có nhiều người, mô hình có thể gặp những vấn đề sau:
 
-- Detect a person who does not correspond to any Ground Truth (GT) person.
-- Fail to detect a person who is present in the Ground Truth.
-- Assign detections from different real people to the same predicted identity.
-- Split detections belonging to one real person across multiple predicted identities.
-- Produce inconsistent person detections across consecutive frames.
+- Phát hiện một người không tương ứng với bất kỳ người nào trong dữ liệu chuẩn (Ground Truth – GT).
+- Không phát hiện được một người thực sự xuất hiện trong GT.
+- Gán các phát hiện thuộc về nhiều người thực tế khác nhau vào cùng một định danh dự đoán.
+- Chia các phát hiện thuộc về cùng một người thực tế thành nhiều định danh dự đoán khác nhau.
+- Phát hiện và theo dõi người không nhất quán giữa các khung hình liên tiếp.
 
-These errors affect both person-level detection reliability and temporal identity consistency.
+Những sai sót này ảnh hưởng đến cả độ tin cậy trong phát hiện người và tính nhất quán của định danh theo thời gian.
 
-This project investigates these phenomena systematically and explores optimization-based approaches to analyze and improve the association between predicted human poses and actual people.
+Dự án hướng tới việc khảo sát có hệ thống các hiện tượng trên, đồng thời nghiên cứu những phương pháp dựa trên tối ưu hóa nhằm phân tích và cải thiện quá trình liên kết giữa các tư thế người được mô hình dự đoán với những người thực tế.
 
-## 2. Research Questions
+## 2. Các câu hỏi nghiên cứu
 
-The project focuses on the following research questions:
+Dự án tập trung vào bốn câu hỏi nghiên cứu chính:
 
-- **RQ1 — Detection Reliability:** How frequently do monocular HPE models produce false-positive and false-negative person detections?
-- **RQ2 — Identity Consistency:** To what extent do predicted person identities remain consistent with actual people across video frames?
-- **RQ3 — Temporal Association:** Can temporal and geometric information improve the association between frame-level pose detections and Ground Truth identities?
-- **RQ4 — Optimization Framework:** Can a Multi-Commodity Min-Cost Flow formulation provide a more reliable global assignment than frame-independent matching methods?
+- **RQ1 – Độ tin cậy của phát hiện người (Detection Reliability):** Các mô hình Monocular HPE tạo ra phát hiện dương tính giả (False Positive) và âm tính giả (False Negative) với tần suất như thế nào?
+- **RQ2 – Tính nhất quán của định danh (Identity Consistency):** Định danh người do mô hình dự đoán nhất quán với người thực tế đến mức nào qua các khung hình video?
+- **RQ3 – Liên kết theo thời gian (Temporal Association):** Thông tin về thời gian và hình học có thể cải thiện việc liên kết các phát hiện tư thế ở từng khung hình với định danh người trong GT hay không?
+- **RQ4 – Khuôn khổ tối ưu hóa (Optimization Framework):** Mô hình hóa bài toán dưới dạng Multi-Commodity Min-Cost Flow có thể tạo ra kết quả gán định danh toàn cục đáng tin cậy hơn các phương pháp đối sánh độc lập theo từng khung hình hay không?
 
-## 3. Research Dataset and Models
+## 3. Bộ dữ liệu và mô hình nghiên cứu
 
-### MPI-INF-3DHP
+### 3.1. MPI-INF-3DHP
 
-The initial experimental dataset is MPI-INF-3DHP.
+Bộ dữ liệu được sử dụng trong giai đoạn thực nghiệm ban đầu là MPI-INF-3DHP.
 
-It provides 3D human pose annotations and camera information that can be used to evaluate monocular HPE predictions.
+Bộ dữ liệu cung cấp các chú thích tư thế người 3D và thông tin camera, cho phép đánh giá kết quả dự đoán của các mô hình Monocular HPE.
 
-The initial experiments will use:
+Các thí nghiệm ban đầu sử dụng:
 
-- WHAM predictions generated from MPI-INF-3DHP videos.
-- MPI-INF-3DHP Ground Truth annotations.
-- Camera calibration information.
-- Frame-level and person-level identifiers.
+- Kết quả dự đoán của WHAM được tạo từ video MPI-INF-3DHP.
+- Dữ liệu tư thế chuẩn MPI-INF-3DHP (Ground Truth).
+- Thông tin hiệu chuẩn camera (Camera Calibration).
+- Định danh ở cấp độ khung hình và cấp độ người.
 
-The initial implementation will focus on matching the actual CSV formats produced for WHAM predictions and MPI-INF-3DHP Ground Truth.
+Phiên bản triển khai đầu tiên tập trung xử lý và đối sánh đúng định dạng CSV thực tế được tạo ra từ kết quả dự đoán WHAM và dữ liệu GT của MPI-INF-3DHP.
 
-### WHAM
+### 3.2. WHAM
 
-WHAM is used as the initial monocular HPE model under investigation.
+WHAM được sử dụng làm mô hình Monocular HPE đầu tiên để khảo sát.
 
-The original WHAM body IDs are retained as model outputs. They must not be assumed to represent Ground Truth person identities.
+Các body ID do WHAM tạo ra được giữ nguyên như kết quả đầu ra của mô hình. Không được mặc định rằng những ID này chính là định danh người trong Ground Truth.
 
-Each detection is represented by a frame-level observation:
+Mỗi phát hiện được biểu diễn bằng một quan sát tại khung hình t, ký hiệu là d(t,i), trong đó:
 
-\[
-d_{t,i}
-\]
+- t là chỉ số khung hình.
+- i là chỉ số của một phát hiện trong khung hình đó.
 
-where \(t\) denotes the frame and \(i\) denotes a detection within that frame.
+Body ID do WHAM tạo ra được lưu giữ như một thuộc tính đi kèm với từng phát hiện.
 
-A WHAM body ID is retained as metadata associated with the detection.
+### 3.3. Mở rộng trong tương lai: Harmony4D
 
-### Future Extension: Harmony4D
+Harmony4D được dự kiến bổ sung như một bộ dữ liệu đánh giá tiếp theo.
 
-Harmony4D is planned as an additional evaluation dataset.
+Kiến trúc nạp dữ liệu và xử lý tọa độ được thiết kế để có thể hỗ trợ nhiều bộ dữ liệu khác nhau. Tuy nhiên, phiên bản triển khai đầu tiên và quá trình tối ưu tham số sẽ tập trung vào MPI-INF-3DHP.
 
-The data-loading and coordinate-processing architecture is designed to support multiple datasets, but the first implementation and parameter optimization will focus on MPI-INF-3DHP.
+## 4. Mô hình hóa bài toán
 
-## 4. Problem Formulation
+Tại mỗi khung hình t, xác định:
 
-Let:
+- G(t): Tập hợp những người xuất hiện trong Ground Truth.
+- D(t): Tập hợp các phát hiện người do mô hình tạo ra.
+- g(t,j): Người thứ j trong Ground Truth.
+- d(t,i): Phát hiện thứ i do mô hình tạo ra.
 
-- \(G_t\) be the set of Ground Truth people in frame \(t\).
-- \(D_t\) be the set of model detections in frame \(t\).
-- \(g_{t,j}\) be Ground Truth person \(j\).
-- \(d_{t,i}\) be predicted detection \(i\).
+Bài toán liên kết cần xác định mỗi phát hiện dự đoán có tương ứng với một người trong Ground Truth hay không.
 
-The association problem is to determine whether each predicted detection corresponds to a Ground Truth person.
+Mô hình hóa bài toán phải cho phép các tình huống sau:
 
-The formulation explicitly allows:
+1. Một người trong Ground Truth không có phát hiện tương ứng tại một khung hình.
+2. Một phát hiện dự đoán không tương ứng với bất kỳ người nào trong Ground Truth.
+3. Một người trong Ground Truth có thể được liên kết với các model ID khác nhau ở những khung hình khác nhau.
+4. Một model ID có thể chứa các phát hiện tương ứng với nhiều người khác nhau trong Ground Truth.
 
-1. A Ground Truth person to have no corresponding detection in a frame.
-2. A predicted detection to have no corresponding Ground Truth person.
-3. A Ground Truth person to be associated with different model IDs across frames.
-4. A model ID to contain detections corresponding to different Ground Truth people.
+Cách tiếp cận này tránh giả định rằng các định danh ban đầu của mô hình luôn chính xác.
 
-This avoids assuming that the model's original identity assignments are always correct.
+## 5. Khuôn khổ MC-MCF đề xuất
 
-## 5. Proposed MC-MCF Framework
+Dự án nghiên cứu mô hình hóa bài toán liên kết định danh toàn cục theo thời gian bằng Multi-Commodity Min-Cost Flow (MC-MCF).
 
-The project investigates a Multi-Commodity Min-Cost Flow (MC-MCF) formulation for global temporal association.
+Mỗi định danh người trong Ground Truth được xem như một luồng hàng hóa (Commodity) riêng biệt.
 
-Each Ground Truth identity is treated as a commodity.
+Quá trình tối ưu hóa hoạt động trên các phát hiện ở cấp độ khung hình, thay vì mặc định rằng các track do WHAM tạo ra đã chính xác.
 
-The optimization operates on frame-level detections rather than assuming that the original WHAM tracks are correct.
+### 5.1. Các biến quyết định
 
-### 5.1 Decision Variables
+Sử dụng ba nhóm biến quyết định:
 
-Let:
+**Biến x(t,j,i):**
 
-\[
-x_{t,j,i}\in\{0,1\}
-\]
+- Nhận giá trị 1 nếu phát hiện thứ i tại khung hình t được gán cho người thứ j trong Ground Truth.
+- Nhận giá trị 0 trong trường hợp ngược lại.
 
-indicate whether detection \(i\) in frame \(t\) is assigned to Ground Truth person \(j\).
+**Biến m(t,j):**
 
-Let:
+- Nhận giá trị 1 nếu người thứ j trong Ground Truth bị bỏ sót tại khung hình t.
+- Nhận giá trị 0 trong trường hợp ngược lại.
 
-\[
-m_{t,j}\in\{0,1\}
-\]
+**Biến u(t,i):**
 
-indicate whether Ground Truth person \(j\) is missed in frame \(t\).
+- Nhận giá trị 1 nếu phát hiện thứ i tại khung hình t không được gán cho bất kỳ người nào trong Ground Truth.
+- Nhận giá trị 0 trong trường hợp ngược lại.
 
-Let:
+Các ràng buộc gán định danh:
 
-\[
-u_{t,i}\in\{0,1\}
-\]
+- Mỗi người trong Ground Truth phải được gán đúng một phát hiện hoặc được đánh dấu là bị bỏ sót.
+- Mỗi phát hiện phải được gán cho đúng một người trong Ground Truth hoặc được đánh dấu là không có đối tượng tương ứng.
 
-indicate whether detection \(i\) is unmatched.
+Có thể biểu diễn hai ràng buộc trên bằng cách diễn giải:
 
-Each Ground Truth person must either be assigned one detection or be marked as missed:
+**Ràng buộc 1 – Đối với mỗi người trong GT:**
 
-\[
-\sum_{i\in D_t}x_{t,j,i}+m_{t,j}=1
-\]
+Tổng số phát hiện được gán cho người đó cộng với biến đánh dấu bỏ sót phải bằng 1.
 
-Each detection must either be assigned to one Ground Truth person or remain unmatched:
+**Ràng buộc 2 – Đối với mỗi phát hiện:**
 
-\[
-\sum_{j\in G_t}x_{t,j,i}+u_{t,i}=1
-\]
+Tổng số người trong GT được gán với phát hiện đó cộng với biến đánh dấu không đối tượng phải bằng 1.
 
-These constraints explicitly represent missed detections and unmatched predictions.
+Hai ràng buộc này cho phép mô hình biểu diễn tường minh cả trường hợp bỏ sót người và trường hợp phát hiện không có đối tượng tương ứng.
 
-### 5.2 Unary Matching Cost
+### 5.2. Chi phí đối sánh đơn (Unary Matching Cost)
 
-The unary cost combines three geometric components:
+Chi phí đối sánh đơn kết hợp ba thành phần hình học:
 
-\[
-C^U_{tji}
-=
-\alpha C^{pose}_{tji}
-+
-\beta C^{root}_{tji}
-+
-\gamma C^{2D}_{tji}
-\]
+- **C_pose:** Sai khác giữa tư thế 3D tương đối so với điểm gốc (Root-relative 3D Pose) hoặc hình dạng bộ xương.
+- **C_root:** Sai khác vị trí điểm gốc (Root Position) trong không gian 3D.
+- **C_2D:** Sai khác giữa các điểm khớp 2D quan sát được và điểm khớp 2D thu được từ phép chiếu lại (2D Reprojection).
 
-where:
+Chi phí tổng hợp được tính theo công thức:
 
-- \(C^{pose}\): root-relative 3D pose or skeleton-shape discrepancy.
-- \(C^{root}\): 3D root-position discrepancy.
-- \(C^{2D}\): 2D reprojection discrepancy.
-- \(\alpha,\beta,\gamma\): non-negative weighting parameters.
+C_U = α × C_pose + β × C_root + γ × C_2D
 
-The cost components should be normalized or otherwise made comparable before combining them.
+Trong đó:
 
-An initial parameter search will investigate:
+- α, β, γ là các trọng số không âm.
+- Mỗi thành phần chi phí cần được chuẩn hóa hoặc đưa về thang đo có thể so sánh trước khi kết hợp.
 
-\[
-\alpha+\beta+\gamma=1
-\]
+Thử nghiệm tìm kiếm tham số ban đầu sẽ sử dụng điều kiện:
 
-The parameters will be selected using validation data, not test data.
+α + β + γ = 1
 
-The feasibility of the 2D reprojection term depends on the availability of suitable 2D observations and camera calibration.
+Các tham số sẽ được lựa chọn trên tập validation, không sử dụng tập test để tối ưu.
 
-### 5.3 Temporal Cost
+Khả năng sử dụng thành phần chi phí tái chiếu 2D phụ thuộc vào việc có sẵn dữ liệu quan sát 2D phù hợp và thông tin hiệu chuẩn camera hay không.
 
-Temporal costs measure the consistency of assignments across consecutive frames.
+### 5.3. Chi phí theo thời gian (Temporal Cost)
 
-A general objective is:
+Chi phí theo thời gian đo lường mức độ nhất quán của các phép gán định danh giữa những khung hình liên tiếp.
 
-\[
-\min \mathcal{L}
-=
-\sum_{t,j}C^U_{t,j}
-+
-\lambda_T\sum_{t,j}C^T_{t,j}
-+
-c_{FP}\sum_{t,i}u_{t,i}
-\]
+Hàm mục tiêu tổng quát được xây dựng dựa trên ba thành phần:
 
-where:
+**Tổng chi phí =**
 
-- \(C^U\): unary matching and missed-detection costs.
-- \(C^T\): temporal transition costs.
-- \(\lambda_T\): temporal-cost weight.
-- \(c_{FP}\): unmatched-detection penalty.
+- Tổng chi phí đối sánh đơn và chi phí bỏ sót người.
+- Cộng với λ_T nhân tổng chi phí chuyển tiếp theo thời gian.
+- Cộng với c_FP nhân số lượng phát hiện không có đối tượng tương ứng.
 
-The missed-detection penalty is included in the unary cost when a Ground Truth person is assigned to the missed state.
+Trong đó:
 
-The exact network construction and optimization constraints will be documented as the implementation develops.
+- C_U: Chi phí đối sánh đơn, bao gồm cả chi phí bỏ sót người.
+- C_T: Chi phí chuyển tiếp theo thời gian.
+- λ_T: Trọng số của chi phí thời gian.
+- c_FP: Mức phạt đối với phát hiện không có người tương ứng.
 
-## 6. Experimental Baselines
+Chi phí bỏ sót người được tính trong thành phần chi phí đơn khi một người trong Ground Truth được gán vào trạng thái bị bỏ sót.
 
-The proposed MC-MCF method should be compared with simpler association strategies.
+Cấu trúc mạng tối ưu hóa và các ràng buộc chi tiết sẽ được tài liệu hóa trong quá trình phát triển và hoàn thiện hệ thống.
 
-| Method | Description |
+## 6. Các phương pháp đối chứng thực nghiệm (Baselines)
+
+Phương pháp MC-MCF đề xuất cần được so sánh với những chiến lược liên kết đơn giản hơn.
+
+| Phương pháp | Mô tả |
 |---|---|
-| B1: Greedy Matching | Frame-level matching using greedy assignment. |
-| B2: Hungarian Matching | Frame-level global assignment with dummy assignments for missed and unmatched observations. |
-| B3: Temporal Optimization | Sequence-level association using temporal information. |
-| B4: MC-MCF | Proposed multi-commodity optimization with shared detection-capacity constraints. |
-| B5: Oracle Assignment | An explicitly defined GT-informed reference or upper-bound experiment, if it provides information beyond B2. |
-| B6: Original WHAM IDs | Evaluation of the model's original identity assignments without modifying them. |
+| B1: Greedy Matching | Đối sánh tại từng khung hình bằng chiến lược tham lam. |
+| B2: Hungarian Matching | Đối sánh toàn cục tại từng khung hình bằng thuật toán Hungarian, có bổ sung các lựa chọn giả (Dummy Assignment) cho trường hợp bỏ sót và phát hiện không có đối tượng tương ứng. |
+| B3: Temporal Optimization | Liên kết định danh ở cấp độ chuỗi video, có sử dụng thông tin theo thời gian. |
+| B4: MC-MCF | Phương pháp tối ưu hóa đa hàng hóa được đề xuất, với các ràng buộc dùng chung về năng lực sử dụng phát hiện. |
+| B5: Oracle Assignment | Phương pháp tham chiếu hoặc thử nghiệm giới hạn trên có sử dụng thông tin GT, nếu cung cấp thông tin bổ sung so với B2. |
+| B6: Original WHAM IDs | Đánh giá trực tiếp các định danh ban đầu của WHAM mà không thực hiện điều chỉnh. |
 
-Baselines must be implemented with clearly documented costs, constraints, and information available to each method.
+Mỗi phương pháp đối chứng phải được triển khai với chi phí, ràng buộc và nguồn thông tin đầu vào được mô tả rõ ràng.
 
-If two baselines use the same cost matrix and assignment constraints, they should be treated as the same method rather than presented as separate contributions.
+Nếu hai phương pháp sử dụng cùng ma trận chi phí và cùng các ràng buộc gán định danh thì cần xem xét chúng là cùng một phương pháp, thay vì trình bày như hai đóng góp nghiên cứu độc lập.
 
-## 7. Evaluation Metrics
+## 7. Các chỉ số đánh giá
 
-### 7.1 Detection Metrics
+### 7.1. Chỉ số đánh giá phát hiện người (Detection Metrics)
 
-- Precision
-- Recall
-- F1-score
-- False-positive detections
-- Missed detections
+- Precision: Độ chính xác của các phát hiện.
+- Recall: Khả năng phát hiện đầy đủ người thực tế.
+- F1-score: Trung bình điều hòa giữa Precision và Recall.
+- False-positive detections: Số lượng phát hiện không có người tương ứng trong GT.
+- Missed detections: Số lượng người trong GT không được mô hình phát hiện.
 
-### 7.2 Identity Metrics
+### 7.2. Chỉ số đánh giá định danh (Identity Metrics)
 
-- IDTP
-- IDFP
-- IDFN
-- IDF1
-- Identity purity
-- Identity contamination
-- Identity fragmentation
+- IDTP: Số lượng phát hiện được gán đúng định danh.
+- IDFP: Số lượng phát hiện bị gán sai định danh.
+- IDFN: Số lượng phát hiện đúng bị bỏ sót trong quá trình gán định danh.
+- IDF1: Chỉ số F1 đánh giá độ chính xác của định danh người.
+- Identity Purity: Mức độ thuần nhất của một định danh dự đoán, phản ánh tỷ lệ phát hiện thuộc về cùng một người thực tế.
+- Identity Contamination: Mức độ một định danh dự đoán chứa các phát hiện thuộc về nhiều người thực tế khác nhau.
+- Identity Fragmentation: Mức độ một người thực tế bị chia thành nhiều định danh dự đoán khác nhau.
 
-Original WHAM IDs will be evaluated separately from the optimized GT-to-detection assignments.
+Các định danh ban đầu của WHAM sẽ được đánh giá riêng với kết quả gán định danh giữa GT và các phát hiện sau tối ưu hóa.
 
-### 7.3 Pose Metrics
+### 7.3. Chỉ số đánh giá tư thế (Pose Metrics)
 
-- MPJPE
-- PA-MPJPE
-- Root-position error
-- Acceleration error
+- MPJPE: Sai số vị trí trung bình của các khớp 3D.
+- PA-MPJPE: Sai số MPJPE sau khi căn chỉnh Procrustes.
+- Root-position Error: Sai số vị trí điểm gốc của cơ thể.
+- Acceleration Error: Sai số gia tốc của chuyển động.
 
-Detection and identity metrics evaluate whether the model identifies and associates people correctly.
+Các chỉ số phát hiện và định danh đánh giá khả năng phát hiện và liên kết đúng người của mô hình.
 
-Pose metrics evaluate the geometric accuracy of the predicted skeletons.
+Các chỉ số tư thế đánh giá độ chính xác hình học của bộ xương dự đoán.
 
-These metrics should be reported separately because good pose accuracy does not necessarily imply reliable person detection or identity consistency.
+Cần báo cáo riêng các nhóm chỉ số này vì độ chính xác tư thế tốt không đồng nghĩa với khả năng phát hiện người hoặc duy trì định danh đáng tin cậy.
 
-## 8. Hyperparameter Optimization
+## 8. Tối ưu hóa siêu tham số (Hyperparameter Optimization)
 
-The first optimization experiment will focus on finding suitable values for:
+Thí nghiệm tối ưu hóa đầu tiên tập trung tìm các giá trị phù hợp cho ba trọng số:
 
-\[
-(\alpha,\beta,\gamma)
-\]
+- α: Trọng số của chi phí tư thế 3D.
+- β: Trọng số của chi phí vị trí điểm gốc 3D.
+- γ: Trọng số của chi phí tái chiếu 2D.
 
-using MPI-INF-3DHP validation data.
+Quy trình thực hiện:
 
-The procedure is:
+1. Nạp kết quả dự đoán WHAM từ các file CSV.
+2. Nạp dữ liệu Ground Truth MPI-INF-3DHP từ các file CSV.
+3. Ánh xạ các khớp tương ứng giữa hai hệ biểu diễn.
+4. Kiểm tra hệ tọa độ, đơn vị tọa độ, thông tin camera và chỉ số khung hình.
+5. Tính toán riêng từng thành phần chi phí tư thế, vị trí điểm gốc và tái chiếu.
+6. Chuẩn hóa các thành phần chi phí.
+7. Tìm kiếm các tổ hợp giá trị ứng viên của α, β và γ.
+8. Chạy phương pháp liên kết định danh với từng tổ hợp tham số.
+9. Đánh giá kết quả gán định danh bằng các chỉ số trên tập validation.
+10. Lựa chọn bộ tham số theo một hàm mục tiêu validation được xác định trước.
 
-1. Load WHAM predictions from CSV files.
-2. Load MPI-INF-3DHP Ground Truth from CSV files.
-3. Map corresponding joints between the two representations.
-4. Validate coordinate systems, coordinate units, camera information, and frame indexing.
-5. Compute the individual pose, root-position, and reprojection costs.
-6. Normalize the cost components.
-7. Search candidate values of \(\alpha,\beta,\gamma\).
-8. Run the association method for each candidate.
-9. Evaluate the resulting assignments using validation metrics.
-10. Select parameters according to a predefined validation objective.
+Trong giai đoạn khảo sát ảnh hưởng của α, β và γ, các tham số khác như trọng số thời gian và mức phạt đối với phát hiện không có đối tượng tương ứng hoặc bỏ sót người nên được giữ cố định.
 
-Other parameters, including temporal weights and false-positive/false-negative penalties, should initially be held fixed when investigating the effect of \(\alpha,\beta,\gamma\).
+Hàm mục tiêu lựa chọn tham số nên dựa trên một chỉ số đánh giá như IDF1 hoặc một điểm số liên kết được xác định trước, thay vì đơn thuần lựa chọn nghiệm có chi phí tối ưu hóa nhỏ nhất.
 
-The parameter-selection objective should be based on an evaluation metric such as IDF1 or a predefined association score, rather than simply selecting the smallest optimization cost.
+Việc chia dữ liệu nên được thực hiện theo đối tượng (Subject) hoặc chuỗi video (Sequence) khi có thể, thay vì chia ngẫu nhiên các khung hình riêng lẻ.
 
-Data splitting should be performed at the subject or sequence level where possible, rather than randomly splitting individual frames.
-
-## 9. Project Structure
+## 9. Cấu trúc dự án
 
 ```text
 monocular-hpe-person-detection-and-identity-reliability/
@@ -348,11 +327,11 @@ monocular-hpe-person-detection-and-identity-reliability/
 └── README.md
 ```
 
-## 10. Data Organization
+## 10. Tổ chức dữ liệu
 
-Raw dataset files should be stored separately from processed data.
+Các file dữ liệu gốc cần được lưu trữ tách biệt với dữ liệu đã qua xử lý.
 
-Example:
+Ví dụ:
 
 ```text
 data/raw/mpi_inf_3dhp/
@@ -368,28 +347,30 @@ data/raw/mpi_inf_3dhp/
     └── ...
 ```
 
-Processed data, intermediate assignments, and experiment outputs should not overwrite the original CSV files.
+Dữ liệu đã xử lý, kết quả gán định danh trung gian và đầu ra thực nghiệm không được ghi đè lên các file CSV gốc.
 
-Large datasets and generated outputs should generally not be committed to Git. Their locations and download or generation instructions should be documented separately.
+Các bộ dữ liệu dung lượng lớn và kết quả được tạo ra trong quá trình thực nghiệm nhìn chung không nên đưa trực tiếp vào Git.
 
-## 11. Reproducibility
+Vị trí lưu trữ, hướng dẫn tải xuống và quy trình tạo dữ liệu cần được mô tả riêng để bảo đảm khả năng tái lập thí nghiệm.
 
-Each experiment should record:
+## 11. Khả năng tái lập thực nghiệm (Reproducibility)
 
-- Dataset and sequence identifiers.
-- Camera identifiers.
-- Model and inference configuration.
-- Joint mapping configuration.
-- Coordinate system and unit conventions.
-- Cost normalization method.
-- Values of \(\alpha,\beta,\gamma\).
-- Temporal and unmatched-detection penalties.
-- Solver and solver configuration.
-- Validation and evaluation metrics.
+Mỗi thí nghiệm cần ghi lại đầy đủ các thông tin sau:
 
-Parameter-search results should be exported to CSV for further analysis.
+- Định danh bộ dữ liệu và chuỗi video.
+- Định danh camera.
+- Mô hình và cấu hình suy luận (Inference Configuration).
+- Cấu hình ánh xạ khớp (Joint Mapping).
+- Quy ước về hệ tọa độ và đơn vị đo.
+- Phương pháp chuẩn hóa chi phí.
+- Giá trị của α, β và γ.
+- Trọng số thời gian và mức phạt đối với các phát hiện không được gán hoặc người bị bỏ sót.
+- Bộ giải tối ưu hóa (Solver) và cấu hình của bộ giải.
+- Các chỉ số validation và evaluation.
 
-Example:
+Kết quả tìm kiếm tham số cần được xuất ra định dạng CSV để thuận tiện cho việc phân tích tiếp theo.
+
+Ví dụ:
 
 ```text
 outputs/
@@ -397,17 +378,21 @@ outputs/
     └── mpi_validation_results.csv
 ```
 
-## 12. Current Development Priorities
+## 12. Các giai đoạn phát triển hiện tại
 
-The implementation will proceed incrementally.
+Việc triển khai dự án được thực hiện theo từng giai đoạn, từ tổ chức dữ liệu đến xây dựng và đánh giá phương pháp tối ưu hóa.
 
-| Stage | Task | Status |
+| Giai đoạn | Công việc | Trạng thái |
 |---|---|---|
-| 1 | Organize MPI-INF-3DHP WHAM and GT data | Planned |
-| 2 | Implement WHAM CSV loader | Planned |
-| 3 | Implement MPI Ground Truth CSV loader | Planned |
-| 4 | Implement joint mapping and coordinate validation | Planned |
-| 5 | Implement individual cost functions | Planned |
-| 6 | Implement MC-MCF network and constraints | Planned |
-| 7 | Implement parameter search for \(\alpha,\beta,\gamma\) | Planned |
-| 8 | Evaluate
+| 1 | Tổ chức dữ liệu WHAM và GT của MPI-INF-3DHP | Planned |
+| 2 | Xây dựng bộ nạp dữ liệu WHAM CSV | Planned |
+| 3 | Xây dựng bộ nạp dữ liệu MPI Ground Truth CSV | Planned |
+| 4 | Ánh xạ khớp và kiểm tra hệ tọa độ | Planned |
+| 5 | Xây dựng các hàm tính chi phí thành phần | Planned |
+| 6 | Xây dựng mạng MC-MCF và các ràng buộc | Planned |
+| 7 | Tìm kiếm tham số α, β và γ | Planned |
+| 8 | Đánh giá phương pháp và kết quả thực nghiệm | Planned |
+
+---
+
+**Mục tiêu dài hạn:** Xây dựng một khuôn khổ nghiên cứu có khả năng đánh giá, phân tích và cải thiện độ tin cậy trong phát hiện người và duy trì định danh người của các mô hình Monocular 3D Human Pose Estimation, thông qua các phương pháp tối ưu hóa có xét đến thông tin hình học và tính liên tục theo thời gian.
