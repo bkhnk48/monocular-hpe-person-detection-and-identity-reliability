@@ -37,6 +37,7 @@ class CostParams:
     c_reappear: float = 0.20
     pose_scale_mm: float = 100.0
     motion_scale_m: float = 0.05
+    gap_power: float = 1.0      # temporal chia cho dt**gap_power (0 = bỏ qua dt)
     start_detected: float = 0.0
     start_missed: float = 0.0
     end_detected: float = 0.0
@@ -50,6 +51,7 @@ class CostParams:
                    c_fp=c.get("false_positive", 0.8), c_fn=c.get("false_negative", 1.0),
                    c_disappear=c.get("disappear", 0.15), c_reappear=c.get("reappear", 0.20),
                    pose_scale_mm=s.get("pose_mm", 100.0), motion_scale_m=s.get("motion_m", 0.05),
+                   gap_power=assoc.get("temporal", {}).get("gap_power", 1.0),
                    start_detected=b.get("start_detected", 0.0),
                    start_missed=b.get("start_missed", 0.0),
                    end_detected=b.get("end_detected", 0.0), end_missed=b.get("end_missed", 0.0))
@@ -91,5 +93,12 @@ def motion_rms(res_a: np.ndarray, res_b: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.sum((res_b[valid] - res_a[valid]) ** 2, axis=1))))
 
 
-def motion_cost(rms_m: float, p: CostParams) -> float:
-    return p.gamma * rms_m / p.motion_scale_m
+def motion_cost(rms_m, p: CostParams, gap=1):
+    """gamma * RMS / (s_M * dt^gap_power).
+
+    dt = số frame gốc giữa 2 lớp liên tiếp của cùng người (1 nếu liền nhau).
+    Với gap_power = 1, chi phí đo tốc độ thay đổi residual trên mỗi frame, nên
+    một khoảng trống 10 frame không bị phạt nặng như 10 lần một bước nhảy.
+    """
+    gap = np.maximum(np.asarray(gap, float), 1.0)
+    return p.gamma * np.asarray(rms_m) / (p.motion_scale_m * gap ** p.gap_power)
