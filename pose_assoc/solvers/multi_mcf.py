@@ -15,6 +15,7 @@ tối ưu (bài toán nới lỏng có cùng nghiệm), khỏi phải gọi MILP
 from __future__ import annotations
 
 import time
+import warnings
 
 import numpy as np
 from scipy.optimize import Bounds, LinearConstraint, milp
@@ -60,14 +61,38 @@ def coupling(net: Network) -> LinearConstraint | None:
     return LinearConstraint(A, -np.inf, 1.0)
 
 
-def solve_milp(net: Network, time_limit: float) -> np.ndarray:
+# Mã trạng thái của scipy.optimize.milp
+MILP_STATUS = {0: "optimal", 1: "limit_reached", 2: "infeasible",
+               3: "unbounded", 4: "other"}
+
+
+def solve_milp(net: Network, time_limit: float) -> tuple[np.ndarray, dict]:
+    """Trả về (luồng, trạng thái HiGHS).
+
+    status = 0 mới là tối ưu đã chứng minh. status = 1 (hết giờ) mà vẫn có res.x
+    thì đó chỉ là nghiệm khả thi tốt nhất tìm được; mip_gap cho biết còn cách
+    cận dưới bao xa.
+    """
     cons = [c for c in (conservation(net), coupling(net)) if c is not None]
     res = milp(c=net.arc_weight(), constraints=cons,
                integrality=np.ones(len(net.tails)), bounds=Bounds(0, 1),
                options={"time_limit": time_limit, "disp": False})
+    stats = {
+        "success": bool(res.success),
+        "status": int(res.status),
+        "status_name": MILP_STATUS.get(int(res.status), "unknown"),
+        "message": str(res.message),
+        "mip_gap": _num(getattr(res, "mip_gap", None)),
+        "mip_node_count": _num(getattr(res, "mip_node_count", None)),
+        "mip_dual_bound": _num(getattr(res, "mip_dual_bound", None)),
+    }
     if res.x is None:
-        raise RuntimeError(f"MILP không tìm được nghiệm: {res.message}")
-    return np.round(res.x).astype(int)
+        raise RuntimeError(f"MILP không tìm được nghiệm: {res.message} (status {res.status})")
+    return np.round(res.x).astype(int), stats
+
+
+def _num(x):
+    return None if x is None else float(x)
 
 
 def solve_network(net: Network, time_limit: float = 300.0) -> tuple[np.ndarray, dict]:
@@ -78,9 +103,15 @@ def solve_network(net: Network, time_limit: float = 300.0) -> tuple[np.ndarray, 
     info = {"K": len(net.persons), "dp_shared_detections": shared}
     if len(net.persons) <= 1 or shared == 0:
         info["method"] = "dp (tối ưu chính xác)"
+        info["optimal"] = True
     else:
-        flow = solve_milp(net, time_limit)
+        flow, stats = solve_milp(net, time_limit)
         info["method"] = "milp (HiGHS)"
+        info["optimal"] = stats["status"] == 0
+        info["milp"] = stats
+        if not info["optimal"]:
+            warnings.warn(f"MILP chưa chứng minh tối ưu ({stats['status_name']}, "
+                          f"mip_gap={stats['mip_gap']}): nghiệm chỉ là khả thi.")
     info["seconds"] = round(time.time() - t0, 2)
     info["objective"] = float(net.arc_weight() @ flow + net.constant)
     return flow, info
