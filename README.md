@@ -20,9 +20,7 @@ Framework hỗ trợ cả trường hợp một người GT và nhiều người
 
 Hướng dẫn thực hành chi tiết về cài đặt môi trường, chuẩn bị dữ liệu, cấu hình và chạy các chương trình MC-MCF được trình bày trong tài liệu riêng:
 
-**[MC-MCF – Hướng dẫn cài đặt và chạy chương trình](GOOGLE_DOCS_URL)**
-
-> Thay `GOOGLE_DOCS_URL` bằng đường dẫn Google Docs sau khi tài liệu được tạo.
+**[MC-MCF – Hướng dẫn cài đặt và chạy chương trình](https://docs.google.com/document/d/1fUIUKLVQOlAJ9S-xI8ahBLh3dZfIocNxEP8fE2JtR_8/edit?usp=sharing)**
 
 ## 3. Ý tưởng phương pháp
 
