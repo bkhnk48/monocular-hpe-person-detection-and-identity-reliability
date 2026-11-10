@@ -80,21 +80,16 @@ def detection_cost(pa_m: float, p: CostParams) -> float:
     return p.alpha * (pa_m * 1000.0) / p.pose_scale_mm - p.c_fp
 
 
-def motion_cost(res_a: np.ndarray, res_b: np.ndarray, p: CostParams) -> float:
-    """Độ thay đổi residual căn chỉnh giữa 2 frame (không giả định body_id giữ nguyên)."""
+def motion_rms(res_a: np.ndarray, res_b: np.ndarray) -> float:
+    """Độ thay đổi residual căn chỉnh giữa 2 frame (mét); 0 nếu thiếu khớp.
+
+    Không giả định body_id giữ nguyên giữa 2 frame.
+    """
     valid = np.isfinite(res_a).all(1) & np.isfinite(res_b).all(1)
     if valid.sum() < MIN_VALID_JOINTS:
         return 0.0
-    rms = np.sqrt(np.mean(np.sum((res_b[valid] - res_a[valid]) ** 2, axis=1)))
-    return p.gamma * rms / p.motion_scale_m
+    return float(np.sqrt(np.mean(np.sum((res_b[valid] - res_a[valid]) ** 2, axis=1))))
 
 
-def transition_cost(a: dict, b: dict, p: CostParams) -> float:
-    """a, b: nút ở 2 lớp liên tiếp của cùng một người."""
-    if a["kind"] == "det" and b["kind"] == "det":
-        return motion_cost(a["residual"], b["residual"], p)
-    if a["kind"] == "det":
-        return p.c_disappear
-    if b["kind"] == "det":
-        return p.c_reappear
-    return 0.0
+def motion_cost(rms_m: float, p: CostParams) -> float:
+    return p.gamma * rms_m / p.motion_scale_m

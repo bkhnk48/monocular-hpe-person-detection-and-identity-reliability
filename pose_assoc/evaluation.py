@@ -36,7 +36,7 @@ def assignment_table(net: Network, flow: np.ndarray) -> pd.DataFrame:
 def objective_breakdown(net: Network, flow: np.ndarray, p: CostParams) -> dict:
     used = [net.nodes[net.heads[a]] for a in np.flatnonzero(flow)]
     dets = [n for n in used if n["kind"] == "det"]
-    n_det_total = round(net.constant / p.c_fp) if p.c_fp else 0
+    n_det_total = net.n_detections
     kinds = np.asarray(net.arc_kind)[flow == 1]
     arc_costs = np.asarray(net.arc_cost)[flow == 1]
     pose = sum(p.alpha * n["pa_mm"] / p.pose_scale_mm for n in dets)

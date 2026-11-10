@@ -86,8 +86,7 @@ def find_sequence(manifest: dict, name: str) -> dict:
 
 def load_inputs(mod, manifest: dict, seq: dict):
     seq["out_dir"].mkdir(parents=True, exist_ok=True)
-    wham = mod.wham_pkl_to_csv(seq["wham_pkl"], manifest["smpl_model"],
-                               seq["out_dir"] / "RA-WHAM.csv")
+    wham = mod.load_wham_csv(seq, manifest["smpl_model"])
     print("  Đọc Ground Truth ...")
     gt, skel = mod.load_gt(seq["gt"])
     return detections_from_csv(wham), gt_limbs(gt, skel)
