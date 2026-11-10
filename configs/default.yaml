@@ -64,6 +64,11 @@ association:
     pose_mm: 100.0
     motion_m: 0.05
 
+  temporal:
+    # chi phí temporal chia cho dt**gap_power, dt = số frame gốc giữa 2 lớp
+    # liên tiếp của một người (1 nếu liền nhau). 0 = bỏ qua dt.
+    gap_power: 1.0
+
   boundary:
     start_detected: 0.0
     start_missed: 0.0
