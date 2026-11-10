@@ -14,7 +14,7 @@
   "validation": [
     {
       "name": "mpi_S8_Seq1_cam0",
-      "wham_pkl": "ray_casting/inputs/datasets/mpi_inf_3dhpe/S8/Seq1/imageSequences/wham_video_0.pkl",
+      "wham_pkl": "1eowaidAe9lcGgSFLEppv49E9NTUT2Jtp",
       "gt": {
         "type": "mpi",
         "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
@@ -26,14 +26,38 @@
     },
     {
       "name": "mpi_S8_Seq1_cam8",
-      "wham_pkl": "WHAM/output/demo/video_cam8/wham_video_cam8.pkl",
+      "wham_pkl": "1xvacdsfs4Ap98PP72TvJGaREnUQ4Wkco",
       "gt": {
         "type": "mpi",
         "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
         "camera": 8,
         "person": "S8"
       },
-      "overlay_video": "WHAM/output/demo/video_cam8/output_video_cam8.mp4",
+      "overlay_video": "",
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam7",
+      "wham_pkl": "1AkjHAIGhlvjHKjsZ9OVHpOurK26PoB8-",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+        "camera": 7,
+        "person": "S8"
+      },
+      "overlay_video": "",
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam6",
+      "wham_pkl": "1np-o_9zSccQQOiOwXTckGawirZjqDQxV",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+        "camera": 6,
+        "person": "S8"
+      },
+      "overlay_video": "",
       "fps": 25
     }
   ],
