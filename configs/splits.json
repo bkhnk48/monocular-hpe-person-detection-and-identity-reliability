@@ -13,49 +13,37 @@
 
   "validation": [
     {
-      "name": "mpi_S8_Seq1_cam0",
-      "wham_pkl": "1eowaidAe9lcGgSFLEppv49E9NTUT2Jtp",
+      "name": "mpi_S1_Seq1_cam8",
+      "wham_pkl": "1CSBmSMopCow0wGBkNuSyPymyzQsLYfB_",
       "gt": {
         "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
-        "camera": 0,
-        "person": "S8"
-      },
-      "overlay_video": "",
-      "fps": 25
-    },
-    {
-      "name": "mpi_S8_Seq1_cam8",
-      "wham_pkl": "1xvacdsfs4Ap98PP72TvJGaREnUQ4Wkco",
-      "gt": {
-        "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
         "camera": 8,
-        "person": "S8"
+        "person": "S1"
       },
       "overlay_video": "",
       "fps": 25
     },
     {
-      "name": "mpi_S8_Seq1_cam7",
-      "wham_pkl": "1AkjHAIGhlvjHKjsZ9OVHpOurK26PoB8-",
+      "name": "mpi_S1_Seq1_cam1",
+      "wham_pkl": "1bHV4zbKYRuZNYaW6zGwBSVXJKqnGaCbx",
       "gt": {
         "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
-        "camera": 7,
-        "person": "S8"
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+        "camera": 1,
+        "person": "S1"
       },
       "overlay_video": "",
       "fps": 25
     },
     {
-      "name": "mpi_S8_Seq1_cam6",
-      "wham_pkl": "1np-o_9zSccQQOiOwXTckGawirZjqDQxV",
+      "name": "mpi_S1_Seq1_cam0",
+      "wham_pkl": "1_WUtbszaKVeeSbc2tJGdiXB5f7UVEDdP",
       "gt": {
         "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
-        "camera": 6,
-        "person": "S8"
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+        "camera": 0,
+        "person": "S1"
       },
       "overlay_video": "",
       "fps": 25
