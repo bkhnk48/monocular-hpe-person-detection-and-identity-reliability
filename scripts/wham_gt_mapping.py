@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import tempfile
 import re
 import subprocess
 import sys
@@ -97,15 +98,23 @@ PALETTE = [(40, 40, 230), (230, 150, 0), (40, 180, 40), (200, 40, 200), (0, 200,
 # ============================================================
 
 
+def is_google_drive_file_id(value) -> bool:
+    """Nhận diện Drive File ID (chuỗi ID, không phải URL hoặc đường dẫn)."""
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{20,}", value) is not None
+
+
 def load_manifest(path: Path) -> dict:
-    """Đọc manifest, đổi mọi đường dẫn thành tuyệt đối."""
+    """Đọc manifest; wham_pkl có thể là Drive File ID hoặc đường dẫn cục bộ."""
     m = json.loads(path.read_text(encoding="utf-8"))
     base = (path.parent / m.get("base_dir", ".")).resolve()
     m["smpl_model"] = base / m["smpl_model"]
     m["output_dir"] = base / m["output_dir"]
     for split in SPLITS:
         for seq in m.get(split, []):
-            seq["wham_pkl"] = base / seq["wham_pkl"]
+            source = seq["wham_pkl"]
+            seq["wham_pkl_is_drive"] = is_google_drive_file_id(source)
+            if not seq["wham_pkl_is_drive"]:
+                seq["wham_pkl"] = (base / source).resolve()
             seq["gt"]["path"] = base / seq["gt"]["path"]
             ov = seq.get("overlay_video") or ""
             seq["overlay_video"] = base / ov if ov else None
@@ -116,9 +125,15 @@ def load_manifest(path: Path) -> dict:
 def sequence_status(seq: dict) -> str:
     if (seq["out_dir"] / "mapping.txt").is_file():
         return "đã có mapping"
-    missing = [k for k, p in (("pkl", seq["wham_pkl"]), ("GT", seq["gt"]["path"]))
-               if not p.exists()]
-    return "THIẾU " + ", ".join(missing) if missing else "chưa gán"
+    if not seq["gt"]["path"].exists():
+        return "THIẾU GT"
+    if (seq["out_dir"] / "RA-WHAM.csv").is_file():
+        return "đã có CSV, sẵn sàng"
+    if seq.get("wham_pkl_is_drive"):
+        return "PKL Google Drive, sẵn sàng tải"
+    if not seq["wham_pkl"].exists():
+        return "THIẾU pkl"
+    return "chưa gán"
 
 
 def print_status(manifest: dict):
@@ -195,6 +210,23 @@ def wham_subject_table(sid, d, J) -> pd.DataFrame:
     return df
 
 
+def download_drive_file(file_id: str, destination: Path) -> Path:
+    """Tải PKL từ Google Drive công khai bằng File ID (cần cài gdown)."""
+    try:
+        import gdown
+    except ImportError as exc:
+        raise RuntimeError("Thiếu thư viện gdown. Cài bằng: pip install gdown") from exc
+    print(f"  Tải PKL từ Google Drive (ID: {file_id}) ...")
+    downloaded = gdown.download(id=file_id, output=str(destination), quiet=False)
+    if not downloaded or not destination.is_file() or destination.stat().st_size == 0:
+        destination.unlink(missing_ok=True)
+        raise RuntimeError(
+            "Không tải được PKL. Kiểm tra File ID và quyền chia sẻ 'Anyone with the link'."
+        )
+    print(f"  Đã tải {destination.stat().st_size:,} bytes.")
+    return destination
+
+
 def wham_pkl_to_csv(pkl: Path, smpl: Path, out_csv: Path) -> pd.DataFrame:
     if out_csv.is_file():
         print(f"  Dùng lại CSV: {out_csv.name}")
@@ -204,10 +236,34 @@ def wham_pkl_to_csv(pkl: Path, smpl: Path, out_csv: Path) -> pd.DataFrame:
     J = load_j_regressor(smpl)
     tables = [wham_subject_table(sid, d, J) for sid, d in results.items()
               if len(d.get("frame_ids", []))]
+    if not tables:
+        raise ValueError(f"PKL không chứa track WHAM hợp lệ: {pkl}")
     df = pd.concat(tables, ignore_index=True).sort_values(["frame_id", "body_id"])
     df.to_csv(out_csv, index=False)
     print(f"  Đã lưu {len(df)} dòng, {df['body_id'].nunique()} body_id -> {out_csv.name}")
     return df
+
+
+def load_wham_csv(seq: dict, smpl: Path) -> pd.DataFrame:
+    """Đọc CSV có sẵn hoặc tải Drive PKL -> CSV; chỉ xóa bản tải sau convert OK."""
+    out_csv = seq["out_dir"] / "RA-WHAM.csv"
+    if out_csv.is_file():
+        return wham_pkl_to_csv(Path(), smpl, out_csv)
+    if not seq.get("wham_pkl_is_drive"):
+        return wham_pkl_to_csv(seq["wham_pkl"], smpl, out_csv)
+
+    with tempfile.NamedTemporaryFile(prefix="wham_drive_", suffix=".pkl", delete=False) as f:
+        temp_pkl = Path(f.name)
+    try:
+        download_drive_file(seq["wham_pkl"], temp_pkl)
+        df = wham_pkl_to_csv(temp_pkl, smpl, out_csv)
+    except Exception:
+        print(f"  Lỗi khi tải/chuyển đổi; giữ file tạm để kiểm tra: {temp_pkl}")
+        raise
+    else:
+        temp_pkl.unlink(missing_ok=True)
+        print("  Đã xóa PKL tạm trên máy (file gốc trên Drive không bị ảnh hưởng).")
+        return df
 
 
 def wham_poses(df: pd.DataFrame) -> dict:
@@ -684,8 +740,7 @@ def process_sequence(seq: dict, manifest: dict, args) -> bool:
         print(f"  {status} -> bỏ qua.")
         return True
     seq["out_dir"].mkdir(parents=True, exist_ok=True)
-    wham_df = wham_pkl_to_csv(seq["wham_pkl"], manifest["smpl_model"],
-                              seq["out_dir"] / "RA-WHAM.csv")
+    wham_df = load_wham_csv(seq, manifest["smpl_model"])
     print("  Đọc Ground Truth ...")
     gt, gt_skel = load_gt(seq["gt"])
     video = build_videos(seq, wham_df, gt, gt_skel, args.rerender)
