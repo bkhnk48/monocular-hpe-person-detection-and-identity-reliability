@@ -108,6 +108,11 @@ def print_summary(s: dict):
           f"{n['layers']} lớp, {n['nodes']} nút, {n['arcs']} cung")
     print(f"  Bộ giải: {s['solver']['method']}, {s['solver']['seconds']} s, "
           f"hàm mục tiêu = {s['solver']['objective']:.4f}")
+    ms = s["solver"].get("milp")
+    if ms:
+        tag = "tối ưu đã chứng minh" if s["solver"]["optimal"] else "CHƯA chứng minh tối ưu"
+        print(f"    HiGHS: {ms['status_name']} ({tag}), mip_gap {ms['mip_gap']}, "
+              f"{ms['mip_node_count']} nút nhánh cận")
     o = s["objective"]
     print(f"    pose {o['pose']:.3f} | FP {o['false_positive']:.3f} | FN {o['false_negative']:.3f}"
           f" | thời gian {o['temporal_and_gaps']:.3f} | biên {o['boundary']:.3f}")
