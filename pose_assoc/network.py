@@ -38,6 +38,7 @@ class Network:
     heads: list[int] = field(default_factory=list)
     arc_sub: list[str] = field(default_factory=list)
     arc_rms: list[float] = field(default_factory=list)   # chỉ có nghĩa với cung "dd"
+    arc_gap: list[int] = field(default_factory=list)     # dt (frame gốc) của cung move
     arc_cost: np.ndarray = None
     node_costs: np.ndarray = None
     n_detections: int = 0
@@ -52,11 +53,12 @@ class Network:
         self.nodes.append(kw)
         return kw["id"]
 
-    def add_arc(self, tail: int, head: int, sub: str, rms: float = 0.0):
+    def add_arc(self, tail: int, head: int, sub: str, rms: float = 0.0, gap: int = 1):
         self.tails.append(tail)
         self.heads.append(head)
         self.arc_sub.append(sub)
         self.arc_rms.append(float(rms))
+        self.arc_gap.append(int(gap))
 
     def node_cost(self) -> np.ndarray:
         return self.node_costs
@@ -78,7 +80,9 @@ def apply_params(net: Network, p: CostParams) -> Network:
     sub = np.array(net.arc_sub)
     net.arc_cost = np.array([fixed[s] for s in net.arc_sub], float)
     dd = sub == "dd"
-    net.arc_cost[dd] = motion_cost(np.asarray(net.arc_rms)[dd], p)
+    # mạng cũ trong cache tuning chưa có arc_gap -> coi mọi dt = 1
+    gap = np.asarray(net.__dict__.get("arc_gap") or np.ones(len(sub)), float)
+    net.arc_cost[dd] = motion_cost(np.asarray(net.arc_rms)[dd], p, gap[dd])
     net.constant = p.c_fp * net.n_detections
     return net
 
@@ -96,12 +100,13 @@ def build_layer(net: Network, frame: int, person: str, gt_pose, dets) -> list[in
 
 
 def connect(net: Network, prev: list[int], cur: list[int]):
+    gap = net.nodes[cur[0]]["frame"] - net.nodes[prev[0]]["frame"]
     for a in prev:
         for b in cur:
             na, nb = net.nodes[a], net.nodes[b]
             sub = ("d" if na["kind"] == "det" else "m") + ("d" if nb["kind"] == "det" else "m")
             rms = motion_rms(na["residual"], nb["residual"]) if sub == "dd" else 0.0
-            net.add_arc(a, b, sub, rms)
+            net.add_arc(a, b, sub, rms, gap)
 
 
 def build_person(net: Network, person: str, gt: dict, dets: dict):
@@ -148,6 +153,7 @@ def nodes_frame(net: Network) -> pd.DataFrame:
 def arcs_frame(net: Network, flow: np.ndarray | None = None) -> pd.DataFrame:
     df = pd.DataFrame({"tail": net.tails, "head": net.heads, "kind": net.arc_kind,
                        "sub": net.arc_sub, "rms_m": net.arc_rms,
+                       "gap": net.__dict__.get("arc_gap") or 1,
                        "arc_cost": net.arc_cost, "weight": net.arc_weight()})
     df["person"] = [net.nodes[t]["person"] for t in net.tails]
     df.insert(0, "id", range(len(df)))
