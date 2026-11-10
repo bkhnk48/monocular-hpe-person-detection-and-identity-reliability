@@ -1,398 +1,552 @@
-# Monocular HPE: Phát hiện người và độ tin cậy của định danh
+# MC-MCF: Multi-Commodity Min-Cost Flow cho gán detection người 3D
 
-Dự án nghiên cứu các lỗi phát hiện người và sự không nhất quán về định danh trong các mô hình ước lượng tư thế người 3D từ video đơn camera (Monocular 3D Human Pose Estimation – HPE). Dự án tập trung khảo sát mô hình WHAM và phát triển một khuôn khổ tối ưu hóa luồng chi phí cực tiểu đa hàng hóa (Multi-Commodity Min-Cost Flow – MC-MCF).
+## 1. Giới thiệu
 
-## 1. Động cơ nghiên cứu
+Dự án xây dựng một framework tối ưu hóa việc gán các detection người 3D từ WHAM cho các đối tượng Ground Truth (GT), sử dụng mô hình **Multi-Commodity Min-Cost Flow (MC-MCF)** trên mạng thời gian mở rộng (*time-expanded network*).
 
-Các mô hình Monocular 3D Human Pose Estimation ước lượng tư thế người trong không gian 3D từ các chuỗi video. Tuy nhiên, kết quả dự đoán của những mô hình này có thể chứa các sai sót mà những chỉ số đánh giá tư thế truyền thống như MPJPE hoặc PA-MPJPE chưa phản ánh đầy đủ.
+Mục tiêu là lựa chọn detection phù hợp cho từng người GT qua các frame, đồng thời:
 
-Trong các tình huống có nhiều người, mô hình có thể gặp những vấn đề sau:
+- Giảm sai số hình học giữa pose dự đoán và pose GT.
+- Hạn chế bỏ sót người GT (*false negatives*).
+- Phạt các detection không được sử dụng (*false positives*).
+- Khuyến khích tính nhất quán theo thời gian của sai số pose.
+- Ngăn một detection bị gán đồng thời cho nhiều người GT.
 
-- Phát hiện một người không tương ứng với bất kỳ người nào trong dữ liệu chuẩn (Ground Truth – GT).
-- Không phát hiện được một người thực sự xuất hiện trong GT.
-- Gán các phát hiện thuộc về nhiều người thực tế khác nhau vào cùng một định danh dự đoán.
-- Chia các phát hiện thuộc về cùng một người thực tế thành nhiều định danh dự đoán khác nhau.
-- Phát hiện và theo dõi người không nhất quán giữa các khung hình liên tiếp.
+Khác với cách lựa chọn detection độc lập tại từng frame, framework xem quá trình gán detection là một bài toán tối ưu hóa trên toàn bộ chuỗi thời gian.
 
-Những sai sót này ảnh hưởng đến cả độ tin cậy trong phát hiện người và tính nhất quán của định danh theo thời gian.
+Framework hỗ trợ cả trường hợp một người GT và nhiều người GT. Với nhiều người, các đường đi của từng người được liên kết thông qua ràng buộc dung lượng detection dùng chung.
 
-Dự án hướng tới việc khảo sát có hệ thống các hiện tượng trên, đồng thời nghiên cứu những phương pháp dựa trên tối ưu hóa nhằm phân tích và cải thiện quá trình liên kết giữa các tư thế người được mô hình dự đoán với những người thực tế.
+## 2. Ý tưởng phương pháp
 
-## 2. Các câu hỏi nghiên cứu
+### 2.1. Đối tượng và detection
 
-Dự án tập trung vào bốn câu hỏi nghiên cứu chính:
+Ký hiệu:
 
-- **RQ1 – Độ tin cậy của phát hiện người (Detection Reliability):** Các mô hình Monocular HPE tạo ra phát hiện dương tính giả (False Positive) và âm tính giả (False Negative) với tần suất như thế nào?
-- **RQ2 – Tính nhất quán của định danh (Identity Consistency):** Định danh người do mô hình dự đoán nhất quán với người thực tế đến mức nào qua các khung hình video?
-- **RQ3 – Liên kết theo thời gian (Temporal Association):** Thông tin về thời gian và hình học có thể cải thiện việc liên kết các phát hiện tư thế ở từng khung hình với định danh người trong GT hay không?
-- **RQ4 – Khuôn khổ tối ưu hóa (Optimization Framework):** Mô hình hóa bài toán dưới dạng Multi-Commodity Min-Cost Flow có thể tạo ra kết quả gán định danh toàn cục đáng tin cậy hơn các phương pháp đối sánh độc lập theo từng khung hình hay không?
+- \(K\): số người GT.
+- \(t\): chỉ số frame.
+- \(d\): một detection từ WHAM.
+- \(k\): một người GT.
+- \(PA_{tkd}\): PA-MPJPE giữa detection \(d\) và người GT \(k\) tại frame \(t\).
 
-## 3. Bộ dữ liệu và mô hình nghiên cứu
+Mỗi detection được xác định bằng cặp:
 
-### 3.1. MPI-INF-3DHP
+\[
+(t,d)=(\text{frame},\text{body\_id})
+\]
 
-Bộ dữ liệu được sử dụng trong giai đoạn thực nghiệm ban đầu là MPI-INF-3DHP.
+Tại mỗi frame mà người GT \(k\) xuất hiện, mạng tạo các trạng thái:
 
-Bộ dữ liệu cung cấp các chú thích tư thế người 3D và thông tin camera, cho phép đánh giá kết quả dự đoán của các mô hình Monocular HPE.
+1. **Detected:** gán một detection WHAM cho người GT.
+2. **Missed:** không có detection nào được gán cho người GT tại frame đó.
 
-Các thí nghiệm ban đầu sử dụng:
+Mỗi người GT được mô hình hóa bằng một luồng đơn vị (*unit flow*) đi từ source đến sink qua các lớp frame tương ứng.
 
-- Kết quả dự đoán của WHAM được tạo từ video MPI-INF-3DHP.
-- Dữ liệu tư thế chuẩn MPI-INF-3DHP (Ground Truth).
-- Thông tin hiệu chuẩn camera (Camera Calibration).
-- Định danh ở cấp độ khung hình và cấp độ người.
+### 2.2. Mạng time-expanded
 
-Phiên bản triển khai đầu tiên tập trung xử lý và đối sánh đúng định dạng CSV thực tế được tạo ra từ kết quả dự đoán WHAM và dữ liệu GT của MPI-INF-3DHP.
+Với mỗi người GT, mạng có cấu trúc:
 
-### 3.2. WHAM
-
-WHAM được sử dụng làm mô hình Monocular HPE đầu tiên để khảo sát.
-
-Các body ID do WHAM tạo ra được giữ nguyên như kết quả đầu ra của mô hình. Không được mặc định rằng những ID này chính là định danh người trong Ground Truth.
-
-Mỗi phát hiện được biểu diễn bằng một quan sát tại khung hình t, ký hiệu là d(t,i), trong đó:
-
-- t là chỉ số khung hình.
-- i là chỉ số của một phát hiện trong khung hình đó.
-
-Body ID do WHAM tạo ra được lưu giữ như một thuộc tính đi kèm với từng phát hiện.
-
-### 3.3. Mở rộng trong tương lai: Harmony4D
-
-Harmony4D được dự kiến bổ sung như một bộ dữ liệu đánh giá tiếp theo.
-
-Kiến trúc nạp dữ liệu và xử lý tọa độ được thiết kế để có thể hỗ trợ nhiều bộ dữ liệu khác nhau. Tuy nhiên, phiên bản triển khai đầu tiên và quá trình tối ưu tham số sẽ tập trung vào MPI-INF-3DHP.
-
-## 4. Mô hình hóa bài toán
-
-Tại mỗi khung hình t, xác định:
-
-- G(t): Tập hợp những người xuất hiện trong Ground Truth.
-- D(t): Tập hợp các phát hiện người do mô hình tạo ra.
-- g(t,j): Người thứ j trong Ground Truth.
-- d(t,i): Phát hiện thứ i do mô hình tạo ra.
-
-Bài toán liên kết cần xác định mỗi phát hiện dự đoán có tương ứng với một người trong Ground Truth hay không.
-
-Mô hình hóa bài toán phải cho phép các tình huống sau:
-
-1. Một người trong Ground Truth không có phát hiện tương ứng tại một khung hình.
-2. Một phát hiện dự đoán không tương ứng với bất kỳ người nào trong Ground Truth.
-3. Một người trong Ground Truth có thể được liên kết với các model ID khác nhau ở những khung hình khác nhau.
-4. Một model ID có thể chứa các phát hiện tương ứng với nhiều người khác nhau trong Ground Truth.
-
-Cách tiếp cận này tránh giả định rằng các định danh ban đầu của mô hình luôn chính xác.
-
-## 5. Khuôn khổ MC-MCF đề xuất
-
-Dự án nghiên cứu mô hình hóa bài toán liên kết định danh toàn cục theo thời gian bằng Multi-Commodity Min-Cost Flow (MC-MCF).
-
-Mỗi định danh người trong Ground Truth được xem như một luồng hàng hóa (Commodity) riêng biệt.
-
-Quá trình tối ưu hóa hoạt động trên các phát hiện ở cấp độ khung hình, thay vì mặc định rằng các track do WHAM tạo ra đã chính xác.
-
-### 5.1. Các biến quyết định
-
-Sử dụng ba nhóm biến quyết định:
-
-**Biến x(t,j,i):**
-
-- Nhận giá trị 1 nếu phát hiện thứ i tại khung hình t được gán cho người thứ j trong Ground Truth.
-- Nhận giá trị 0 trong trường hợp ngược lại.
-
-**Biến m(t,j):**
-
-- Nhận giá trị 1 nếu người thứ j trong Ground Truth bị bỏ sót tại khung hình t.
-- Nhận giá trị 0 trong trường hợp ngược lại.
-
-**Biến u(t,i):**
-
-- Nhận giá trị 1 nếu phát hiện thứ i tại khung hình t không được gán cho bất kỳ người nào trong Ground Truth.
-- Nhận giá trị 0 trong trường hợp ngược lại.
-
-Các ràng buộc gán định danh:
-
-- Mỗi người trong Ground Truth phải được gán đúng một phát hiện hoặc được đánh dấu là bị bỏ sót.
-- Mỗi phát hiện phải được gán cho đúng một người trong Ground Truth hoặc được đánh dấu là không có đối tượng tương ứng.
-
-Có thể biểu diễn hai ràng buộc trên bằng cách diễn giải:
-
-**Ràng buộc 1 – Đối với mỗi người trong GT:**
-
-Tổng số phát hiện được gán cho người đó cộng với biến đánh dấu bỏ sót phải bằng 1.
-
-**Ràng buộc 2 – Đối với mỗi phát hiện:**
-
-Tổng số người trong GT được gán với phát hiện đó cộng với biến đánh dấu không đối tượng phải bằng 1.
-
-Hai ràng buộc này cho phép mô hình biểu diễn tường minh cả trường hợp bỏ sót người và trường hợp phát hiện không có đối tượng tương ứng.
-
-### 5.2. Chi phí đối sánh đơn (Unary Matching Cost)
-
-Chi phí đối sánh đơn kết hợp ba thành phần hình học:
-
-- **C_pose:** Sai khác giữa tư thế 3D tương đối so với điểm gốc (Root-relative 3D Pose) hoặc hình dạng bộ xương.
-- **C_root:** Sai khác vị trí điểm gốc (Root Position) trong không gian 3D.
-- **C_2D:** Sai khác giữa các điểm khớp 2D quan sát được và điểm khớp 2D thu được từ phép chiếu lại (2D Reprojection).
-
-Chi phí tổng hợp được tính theo công thức:
-
-C_U = α × C_pose + β × C_root + γ × C_2D
+\[
+s_k \rightarrow V_{1,k}\rightarrow V_{2,k}
+\rightarrow \cdots \rightarrow V_{T,k}\rightarrow t_k
+\]
 
 Trong đó:
 
-- α, β, γ là các trọng số không âm.
-- Mỗi thành phần chi phí cần được chuẩn hóa hoặc đưa về thang đo có thể so sánh trước khi kết hợp.
+- \(s_k\): source của người GT \(k\).
+- \(t_k\): sink của người GT \(k\).
+- \(V_{t,k}\): tập trạng thái của người \(k\) tại frame \(t\).
 
-Thử nghiệm tìm kiếm tham số ban đầu sẽ sử dụng điều kiện:
+Các trạng thái giữa hai frame liên tiếp trong danh sách frame của người GT được kết nối bằng các cung chuyển tiếp. Mỗi cung chuyển tiếp lưu thêm khoảng cách frame gốc \(\Delta t\) giữa hai lớp (bằng 1 nếu hai frame liền nhau).
 
-α + β + γ = 1
+Các loại cung gồm:
 
-Các tham số sẽ được lựa chọn trên tập validation, không sử dụng tập test để tối ưu.
-
-Khả năng sử dụng thành phần chi phí tái chiếu 2D phụ thuộc vào việc có sẵn dữ liệu quan sát 2D phù hợp và thông tin hiệu chuẩn camera hay không.
-
-### 5.3. Chi phí theo thời gian (Temporal Cost)
-
-Chi phí theo thời gian đo lường mức độ nhất quán của các phép gán định danh giữa những khung hình liên tiếp.
-
-Hàm mục tiêu tổng quát được xây dựng dựa trên ba thành phần:
-
-**Tổng chi phí =**
-
-- Tổng chi phí đối sánh đơn và chi phí bỏ sót người.
-- Cộng với λ_T nhân tổng chi phí chuyển tiếp theo thời gian.
-- Cộng với c_FP nhân số lượng phát hiện không có đối tượng tương ứng.
-
-Trong đó:
-
-- C_U: Chi phí đối sánh đơn, bao gồm cả chi phí bỏ sót người.
-- C_T: Chi phí chuyển tiếp theo thời gian.
-- λ_T: Trọng số của chi phí thời gian.
-- c_FP: Mức phạt đối với phát hiện không có người tương ứng.
-
-Chi phí bỏ sót người được tính trong thành phần chi phí đơn khi một người trong Ground Truth được gán vào trạng thái bị bỏ sót.
-
-Cấu trúc mạng tối ưu hóa và các ràng buộc chi tiết sẽ được tài liệu hóa trong quá trình phát triển và hoàn thiện hệ thống.
-
-## 6. Các phương pháp đối chứng thực nghiệm (Baselines)
-
-Phương pháp MC-MCF đề xuất cần được so sánh với những chiến lược liên kết đơn giản hơn.
-
-| Phương pháp | Mô tả |
+| Cung | Ý nghĩa |
 |---|---|
-| B1: Greedy Matching | Đối sánh tại từng khung hình bằng chiến lược tham lam. |
-| B2: Hungarian Matching | Đối sánh toàn cục tại từng khung hình bằng thuật toán Hungarian, có bổ sung các lựa chọn giả (Dummy Assignment) cho trường hợp bỏ sót và phát hiện không có đối tượng tương ứng. |
-| B3: Temporal Optimization | Liên kết định danh ở cấp độ chuỗi video, có sử dụng thông tin theo thời gian. |
-| B4: MC-MCF | Phương pháp tối ưu hóa đa hàng hóa được đề xuất, với các ràng buộc dùng chung về năng lực sử dụng phát hiện. |
-| B5: Oracle Assignment | Phương pháp tham chiếu hoặc thử nghiệm giới hạn trên có sử dụng thông tin GT, nếu cung cấp thông tin bổ sung so với B2. |
-| B6: Original WHAM IDs | Đánh giá trực tiếp các định danh ban đầu của WHAM mà không thực hiện điều chỉnh. |
+| `start_det` | Source → Detected |
+| `start_miss` | Source → Missed |
+| `dd` | Detected → Detected |
+| `dm` | Detected → Missed |
+| `md` | Missed → Detected |
+| `mm` | Missed → Missed |
+| `end_det` | Detected → Sink |
+| `end_miss` | Missed → Sink |
+| `empty` | Source → Sink (người không có frame GT nào) |
 
-Mỗi phương pháp đối chứng phải được triển khai với chi phí, ràng buộc và nguồn thông tin đầu vào được mô tả rõ ràng.
+Các chi phí của nút và cung được lưu dưới dạng các đại lượng thô (PA-MPJPE, RMS residual, \(\Delta t\), loại cung) và được tính lại bằng `apply_params()` khi thay đổi bộ tham số, không cần dựng lại mạng.
 
-Nếu hai phương pháp sử dụng cùng ma trận chi phí và cùng các ràng buộc gán định danh thì cần xem xét chúng là cùng một phương pháp, thay vì trình bày như hai đóng góp nghiên cứu độc lập.
+### 2.3. Ràng buộc dùng chung detection
 
-## 7. Các chỉ số đánh giá
+Trong trường hợp nhiều người GT, mỗi người có một luồng riêng. Tuy nhiên, các luồng cùng sử dụng tập detection WHAM.
 
-### 7.1. Chỉ số đánh giá phát hiện người (Detection Metrics)
+Một detection chỉ được gán cho tối đa một người GT:
 
-- Precision: Độ chính xác của các phát hiện.
-- Recall: Khả năng phát hiện đầy đủ người thực tế.
-- F1-score: Trung bình điều hòa giữa Precision và Recall.
-- False-positive detections: Số lượng phát hiện không có người tương ứng trong GT.
-- Missed detections: Số lượng người trong GT không được mô hình phát hiện.
+\[
+\sum_k x_{tkd}\leq 1
+\]
 
-### 7.2. Chỉ số đánh giá định danh (Identity Metrics)
+Trong đó \(x_{tkd}=1\) nếu detection \(d\) tại frame \(t\) được gán cho người \(k\).
 
-- IDTP: Số lượng phát hiện được gán đúng định danh.
-- IDFP: Số lượng phát hiện bị gán sai định danh.
-- IDFN: Số lượng phát hiện đúng bị bỏ sót trong quá trình gán định danh.
-- IDF1: Chỉ số F1 đánh giá độ chính xác của định danh người.
-- Identity Purity: Mức độ thuần nhất của một định danh dự đoán, phản ánh tỷ lệ phát hiện thuộc về cùng một người thực tế.
-- Identity Contamination: Mức độ một định danh dự đoán chứa các phát hiện thuộc về nhiều người thực tế khác nhau.
-- Identity Fragmentation: Mức độ một người thực tế bị chia thành nhiều định danh dự đoán khác nhau.
+Đây là ràng buộc liên kết các luồng và tạo nên bản chất multi-commodity của bài toán.
 
-Các định danh ban đầu của WHAM sẽ được đánh giá riêng với kết quả gán định danh giữa GT và các phát hiện sau tối ưu hóa.
+## 3. Hàm mục tiêu
 
-### 7.3. Chỉ số đánh giá tư thế (Pose Metrics)
+Hàm mục tiêu kết hợp chi phí pose, false positive, false negative, tính nhất quán theo thời gian, chi phí chuyển trạng thái và chi phí biên.
 
-- MPJPE: Sai số vị trí trung bình của các khớp 3D.
-- PA-MPJPE: Sai số MPJPE sau khi căn chỉnh Procrustes.
-- Root-position Error: Sai số vị trí điểm gốc của cơ thể.
-- Acceleration Error: Sai số gia tốc của chuyển động.
+### 3.1. Chi phí pose và gán detection
 
-Các chỉ số phát hiện và định danh đánh giá khả năng phát hiện và liên kết đúng người của mô hình.
+Với detection \(d\) được gán cho người GT \(k\) tại frame \(t\), chi phí nút là:
 
-Các chỉ số tư thế đánh giá độ chính xác hình học của bộ xương dự đoán.
+\[
+C_{\mathrm{det}}(t,k,d)
+=
+\alpha\frac{PA_{tkd}}{s_P}-C_{FP}
+\]
 
-Cần báo cáo riêng các nhóm chỉ số này vì độ chính xác tư thế tốt không đồng nghĩa với khả năng phát hiện người hoặc duy trì định danh đáng tin cậy.
+Trong đó:
 
-## 8. Tối ưu hóa siêu tham số (Hyperparameter Optimization)
+- \(PA_{tkd}\): PA-MPJPE, tính bằng mm.
+- \(\alpha\): trọng số pose.
+- \(s_P\): hệ số chuẩn hóa pose, mặc định 100 mm.
+- \(C_{FP}\): chi phí false positive, mặc định 0.8.
 
-Thí nghiệm tối ưu hóa đầu tiên tập trung tìm các giá trị phù hợp cho ba trọng số:
+Chi phí trạng thái missed:
 
-- α: Trọng số của chi phí tư thế 3D.
-- β: Trọng số của chi phí vị trí điểm gốc 3D.
-- γ: Trọng số của chi phí tái chiếu 2D.
+\[
+C_{\mathrm{miss}}=C_{FN}
+\]
 
-Quy trình thực hiện:
+Trong đó \(C_{FN}\) là chi phí false negative, mặc định bằng 1.0.
 
-1. Nạp kết quả dự đoán WHAM từ các file CSV.
-2. Nạp dữ liệu Ground Truth MPI-INF-3DHP từ các file CSV.
-3. Ánh xạ các khớp tương ứng giữa hai hệ biểu diễn.
-4. Kiểm tra hệ tọa độ, đơn vị tọa độ, thông tin camera và chỉ số khung hình.
-5. Tính toán riêng từng thành phần chi phí tư thế, vị trí điểm gốc và tái chiếu.
-6. Chuẩn hóa các thành phần chi phí.
-7. Tìm kiếm các tổ hợp giá trị ứng viên của α, β và γ.
-8. Chạy phương pháp liên kết định danh với từng tổ hợp tham số.
-9. Đánh giá kết quả gán định danh bằng các chỉ số trên tập validation.
-10. Lựa chọn bộ tham số theo một hàm mục tiêu validation được xác định trước.
+**Giải thích cách tính false positive**
 
-Trong giai đoạn khảo sát ảnh hưởng của α, β và γ, các tham số khác như trọng số thời gian và mức phạt đối với phát hiện không có đối tượng tương ứng hoặc bỏ sót người nên được giữ cố định.
+Code sử dụng \(-C_{FP}\) trong chi phí của mỗi detection được gán và cộng thêm một hằng số:
 
-Hàm mục tiêu lựa chọn tham số nên dựa trên một chỉ số đánh giá như IDF1 hoặc một điểm số liên kết được xác định trước, thay vì đơn thuần lựa chọn nghiệm có chi phí tối ưu hóa nhỏ nhất.
+\[
+C_{FP}N_D
+\]
 
-Việc chia dữ liệu nên được thực hiện theo đối tượng (Subject) hoặc chuỗi video (Sequence) khi có thể, thay vì chia ngẫu nhiên các khung hình riêng lẻ.
+với \(N_D\) là tổng số detection trong dữ liệu đầu vào.
 
-## 9. Cấu trúc dự án
+Do đó:
 
-```text
-monocular-hpe-person-detection-and-identity-reliability/
-│
-├── data/
-│   ├── raw/
-│   │   └── mpi_inf_3dhp/
-│   │       ├── wham_predictions/
-│   │       └── ground_truth/
-│   │
-│   ├── processed/
-│   │   └── mpi_inf_3dhp/
-│   │
-│   └── calibration/
-│       └── mpi_inf_3dhp/
-│
-├── src/
-│   ├── data/
-│   │   ├── wham_loader.py
-│   │   ├── mpi_gt_loader.py
-│   │   ├── mpi_joint_mapping.py
-│   │   ├── harmony4d_loader.py
-│   │   └── coordinate_transform.py
-│   │
-│   ├── costs/
-│   │   ├── root_cost.py
-│   │   ├── pose_cost.py
-│   │   ├── reprojection_cost.py
-│   │   ├── transition_cost.py
-│   │   ├── unary_cost.py
-│   │   └── cost_matrix.py
-│   │
-│   ├── optimization/
-│   │   ├── network_builder.py
-│   │   ├── mc_mcf_model.py
-│   │   ├── constraints.py
-│   │   └── solver.py
-│   │
-│   ├── tuning/
-│   │   ├── validation.py
-│   │   ├── parameter_search.py
-│   │   └── objective.py
-│   │
-│   ├── evaluation/
-│   │   ├── detection_metrics.py
-│   │   ├── identity_metrics.py
-│   │   ├── identity_purity.py
-│   │   ├── contamination.py
-│   │   └── pose_metrics.py
-│   │
-│   └── main.py
-│
-├── experiments/
-│   ├── configs/
-│   │   └── mpi_validation.yaml
-│   ├── tune_mpi.py
-│   └── run_experiment.py
-│
-├── outputs/
-│   ├── parameter_search/
-│   ├── assignments/
-│   ├── metrics/
-│   └── visualizations/
-│
-├── tests/
-├── docs/
-├── requirements.txt
-├── pyproject.toml
-├── .gitignore
-└── README.md
+\[
+\begin{aligned}
+&\sum_{\mathrm{assigned}\ d}
+\left(
+\alpha\frac{PA_d}{s_P}-C_{FP}
+\right)
++C_{FP}N_D\\
+&=
+\sum_{\mathrm{assigned}\ d}
+\alpha\frac{PA_d}{s_P}
++C_{FP}N_{FP}
+\end{aligned}
+\]
+
+với \(N_{FP}\) là số detection không được sử dụng.
+
+Cách biểu diễn này giúp đưa chi phí false positive vào mô hình dưới dạng chi phí nút tuyến tính, trong khi vẫn giữ nguyên ý nghĩa của hàm mục tiêu.
+
+### 3.2. Chi phí nhất quán theo thời gian
+
+Với hai trạng thái Detected liên tiếp \(a\) và \(b\) trên đường đi của cùng một người GT, framework tính chi phí dựa trên sự thay đổi của residual sau Procrustes alignment.
+
+Residual tại frame \(t\), khớp \(j\):
+
+\[
+r_{t,j}
+=
+\hat{X}_{t,j}^{aligned}-Y_{t,j}^{GT}
+\]
+
+Trong đó:
+
+- \(\hat{X}_{t,j}^{aligned}\): khớp dự đoán sau khi căn chỉnh với GT.
+- \(Y_{t,j}^{GT}\): khớp tương ứng trong GT.
+
+Độ thay đổi residual giữa hai trạng thái:
+
+\[
+RMS(r_a,r_b)
+=
+\sqrt{
+\frac{1}{J}
+\sum_{j=1}^{J}
+\|r_{b,j}-r_{a,j}\|_2^2
+}
+\]
+
+Chỉ các khớp hợp lệ ở cả hai frame mới được sử dụng. Nếu có ít hơn 8 khớp hợp lệ, hàm trả về 0.
+
+Chi phí temporal:
+
+\[
+C_{\mathrm{temporal}}(a,b)
+=
+\gamma\frac{RMS(r_a,r_b)}{s_M\,(\Delta t_{ab})^{p}}
+\]
+
+Trong đó:
+
+- \(\gamma\): trọng số temporal.
+- \(s_M\): hệ số chuẩn hóa temporal, mặc định 0.05 m.
+- \(\Delta t_{ab}\ge 1\): số frame gốc giữa hai lớp \(a\) và \(b\).
+- \(p\): `gap_power`, mặc định 1. Với \(p=1\), chi phí đo *tốc độ* thay đổi residual trên mỗi frame, nên một khoảng trống 10 frame không bị phạt như một bước nhảy giữa hai frame liền nhau. Đặt \(p=0\) để bỏ qua \(\Delta t\).
+
+Khi mọi frame GT liền nhau (\(\Delta t=1\)), công thức trùng với công thức không có \(\Delta t\). Trên các sequence đã gán nhãn (MPI S8 cam0/cam8, Harmony4D 041 cam07), mọi \(\Delta t\) đều bằng 1.
+
+**Lưu ý về ý nghĩa của temporal cost**
+
+Đây là chi phí đo sự thay đổi của sai số residual sau Procrustes alignment độc lập ở từng frame. Nó không trực tiếp đo vận tốc, độ dịch chuyển hay chuyển động vật lý của cơ thể.
+
+Vì vậy, trong framework này, thuật ngữ *temporal residual consistency* được sử dụng thay cho *physical motion smoothness*.
+
+### 3.3. Chi phí chuyển trạng thái
+
+Các trạng thái trên đường đi có các chi phí chuyển tiếp:
+
+| Chuyển trạng thái | Chi phí |
+|---|---:|
+| Detected → Detected | \(C_{\mathrm{temporal}}\) |
+| Detected → Missed | \(C_{\mathrm{disappear}}\) |
+| Missed → Detected | \(C_{\mathrm{reappear}}\) |
+| Missed → Missed | 0 |
+
+Trong đó:
+
+- \(C_{\mathrm{disappear}}\): chi phí khi một người chuyển từ trạng thái detected sang missed.
+- \(C_{\mathrm{reappear}}\): chi phí khi một người chuyển từ missed sang detected.
+
+\(C_{\mathrm{disappear}}\) và \(C_{\mathrm{reappear}}\) là chi phí cho một *sự kiện* đổi trạng thái nên không chia theo \(\Delta t\).
+
+### 3.4. Chi phí biên
+
+Mạng cho phép cấu hình riêng chi phí tại đầu và cuối chuỗi:
+
+\[
+C_{\mathrm{start}}=
+\begin{cases}
+C_{\mathrm{start,det}}, & \text{nếu trạng thái đầu là detected}\\
+C_{\mathrm{start,miss}}, & \text{nếu trạng thái đầu là missed}
+\end{cases}
+\]
+
+Tương tự:
+
+\[
+C_{\mathrm{end}}=
+\begin{cases}
+C_{\mathrm{end,det}}, & \text{nếu trạng thái cuối là detected}\\
+C_{\mathrm{end,miss}}, & \text{nếu trạng thái cuối là missed}
+\end{cases}
+\]
+
+Các chi phí biên mặc định đều bằng 0.
+
+### 3.5. Hàm mục tiêu tổng thể
+
+Có thể biểu diễn hàm mục tiêu dưới dạng:
+
+\[
+\begin{aligned}
+\min \mathcal{L}={}&
+\sum_{t,k,d}x_{tkd}
+\left(
+\alpha\frac{PA_{tkd}}{s_P}-C_{FP}
+\right)\\
+&+\sum_{t,k}m_{tk}C_{FN}\\
+&+\sum_{(a,b)\in E_{dd}}
+C_{\mathrm{temporal}}(a,b)\\
+&+N_{dm}C_{\mathrm{disappear}}\\
+&+N_{md}C_{\mathrm{reappear}}\\
+&+C_{\mathrm{boundary}}+C_{FP}N_D
+\end{aligned}
+\]
+
+Trong đó:
+
+- \(m_{tk}=1\) nếu người \(k\) bị missed tại frame \(t\).
+- \(E_{dd}\): tập các cung Detected → Detected được sử dụng.
+- \(N_{dm}\): số cung Detected → Missed được sử dụng.
+- \(N_{md}\): số cung Missed → Detected được sử dụng.
+- \(C_{\mathrm{boundary}}\): tổng chi phí biên.
+- \(N_D\): tổng số detection đầu vào.
+
+Hàm mục tiêu được tối thiểu hóa với các ràng buộc bảo toàn luồng và dung lượng detection dùng chung.
+
+## 4. Mô hình tối ưu hóa MC-MCF
+
+### 4.1. Ràng buộc bảo toàn luồng
+
+Với mỗi người GT, luồng phải đi từ source đến sink.
+
+Tại các nút trung gian, tổng luồng đi vào bằng tổng luồng đi ra.
+
+Với biến luồng trên cung \(a\), ký hiệu \(f_a\), ràng buộc bảo toàn luồng được viết:
+
+\[
+\sum_{a\in\delta^-(v)}f_a
+-
+\sum_{a\in\delta^+(v)}f_a
+=
+b_v
+\]
+
+Trong đó:
+
+\[
+b_v=
+\begin{cases}
+-1,&v=\text{source}\\
+1,&v=\text{sink}\\
+0,&\text{các nút khác}
+\end{cases}
+\]
+
+Mỗi người GT có một đơn vị luồng từ source đến sink.
+
+### 4.2. Ràng buộc dung lượng detection
+
+Với mỗi detection \((t,d)\):
+
+\[
+\sum_k x_{tkd}\leq 1
+\]
+
+Ràng buộc này bảo đảm một detection WHAM không thể được sử dụng đồng thời bởi nhiều người GT.
+
+### 4.3. Biến quyết định
+
+Các biến luồng trên cung là biến nhị phân:
+
+\[
+f_a\in\{0,1\}
+\]
+
+Vì mỗi luồng đi qua một đường duy nhất trong mạng phân lớp, các biến này biểu diễn việc lựa chọn đường đi tương ứng với từng người GT.
+
+### 4.4. Công thức bài toán MILP
+
+Sau khi xây dựng các chi phí nút và cung, bài toán được biểu diễn dưới dạng:
+
+\[
+\min_f \sum_{a\in A}w_af_a+C_{FP}N_D
+\]
+
+với:
+
+\[
+w_a=C_{\mathrm{arc}}(a)+C_{\mathrm{node}}(\mathrm{head}(a))
+\]
+
+subject to:
+
+\[
+Af=b
+\]
+
+\[
+Bf\leq \mathbf{1}
+\]
+
+\[
+f_a\in\{0,1\}
+\]
+
+Trong đó:
+
+- \(A\): ma trận ràng buộc bảo toàn luồng.
+- \(B\): ma trận ràng buộc dung lượng detection.
+- \(w_a\): trọng số của cung, bao gồm chi phí cung và chi phí nút đích.
+- \(C_{FP}N_D\): hằng số được cộng khi tính objective đầy đủ.
+
+## 5. Chiến lược giải bài toán
+
+Framework sử dụng hai phương pháp: Dynamic Programming (DP) và Mixed-Integer Linear Programming (MILP).
+
+### 5.1. Single-commodity: Dynamic Programming
+
+Với một người GT, bài toán trở thành tìm đường đi ngắn nhất trên mạng phân lớp dạng DAG.
+
+Do các cung được tạo theo thứ tự topo, thuật toán có thể duyệt lần lượt các cung để cập nhật chi phí đường đi ngắn nhất.
+
+Độ phức tạp của bước tìm đường đi tỷ lệ tuyến tính với số nút và số cung:
+
+\[
+O(|V|+|A|)
+\]
+
+Đây là nghiệm tối ưu chính xác cho trường hợp một người GT trong mô hình hiện tại.
+
+### 5.2. Multi-commodity: DP kết hợp MILP
+
+Khi có nhiều người GT, framework trước tiên giải độc lập từng luồng bằng DP, tức tạm thời bỏ qua ràng buộc dung lượng detection dùng chung.
+
+Sau đó, kiểm tra các đường đi vừa tìm được:
+
+- Nếu không có detection nào được nhiều hơn một người sử dụng, nghiệm DP thỏa mãn ràng buộc dùng chung. Vì nghiệm độc lập đã tối ưu cho từng luồng và đồng thời khả thi đối với bài toán kết hợp, nghiệm này cũng là nghiệm tối ưu của bài toán MC-MCF.
+- Nếu có detection bị nhiều người cùng sử dụng, framework chuyển sang giải bài toán MILP với đầy đủ ràng buộc dung lượng detection.
+
+MILP được giải bằng `scipy.optimize.milp`, sử dụng bộ giải HiGHS. Thời gian giải mặc định được giới hạn ở 300 giây (`--time-limit`).
+
+**Kiểm tra trạng thái tối ưu**
+
+Sau mỗi lần giải, thông tin bộ giải được ghi vào `summary.json` (khóa `solver`):
+
+| Khóa | Ý nghĩa |
+|---|---|
+| `method` | `dp (tối ưu chính xác)` hoặc `milp (HiGHS)` |
+| `optimal` | `true` nếu nghiệm là tối ưu đã chứng minh (DP, hoặc HiGHS `status = 0`) |
+| `milp.success`, `milp.status`, `milp.status_name`, `milp.message` | trạng thái HiGHS: 0 `optimal`, 1 `limit_reached`, 2 `infeasible`, 3 `unbounded`, 4 `other` |
+| `milp.mip_gap` | khoảng cách tương đối giữa nghiệm và cận dưới |
+| `milp.mip_node_count` | số nút nhánh cận đã duyệt |
+| `milp.mip_dual_bound` | cận dưới tốt nhất |
+
+Nếu MILP dừng vì hết thời gian nhưng vẫn có nghiệm khả thi, nghiệm vẫn được dùng nhưng `optimal = false`, chương trình in cảnh báo, và `pose_assoc.tune` đếm số sequence như vậy trong cột `non_optimal` của bảng kết quả. Nếu HiGHS không trả về nghiệm nào, chương trình dừng với lỗi.
+
+## 6. Các tham số mặc định
+
+| Tham số | Giá trị mặc định | Ý nghĩa | Khóa trong `configs/default.yaml` (mục `association`) |
+|---|---:|---|---|
+| \(\alpha\) | 1.0 | Trọng số pose | `weights.pose` |
+| \(\gamma\) | 0.5 | Trọng số temporal residual | `weights.temporal` |
+| \(C_{FP}\) | 0.8 | Phạt false positive | `costs.false_positive` |
+| \(C_{FN}\) | 1.0 | Phạt false negative | `costs.false_negative` |
+| \(C_{\mathrm{disappear}}\) | 0.15 | Phạt Detected → Missed | `costs.disappear` |
+| \(C_{\mathrm{reappear}}\) | 0.20 | Phạt Missed → Detected | `costs.reappear` |
+| \(s_P\) | 100 mm | Pose normalization scale | `scales.pose_mm` |
+| \(s_M\) | 0.05 m | Temporal normalization scale | `scales.motion_m` |
+| \(p\) | 1.0 | Số mũ của \(\Delta t\) trong temporal cost | `temporal.gap_power` |
+| \(C_{\mathrm{start,det}}\) | 0.0 | Chi phí đầu chuỗi, detected | `boundary.start_detected` |
+| \(C_{\mathrm{start,miss}}\) | 0.0 | Chi phí đầu chuỗi, missed | `boundary.start_missed` |
+| \(C_{\mathrm{end,det}}\) | 0.0 | Chi phí cuối chuỗi, detected | `boundary.end_detected` |
+| \(C_{\mathrm{end,miss}}\) | 0.0 | Chi phí cuối chuỗi, missed | `boundary.end_missed` |
+
+Các tham số được tổ chức trong `CostParams` (`pose_assoc/costs.py`) và được nạp từ cấu hình thông qua `from_config()`. Bảng này được kiểm tra tự động với `CostParams` bởi `tests/test_readme_sync.py`.
+
+## 7. Dữ liệu và tiền xử lý
+
+### 7.1. Bộ khớp sử dụng
+
+Framework sử dụng 12 khớp chung giữa các định dạng pose:
+
+- Left shoulder, right shoulder
+- Left elbow, right elbow
+- Left wrist, right wrist
+- Left hip, right hip
+- Left knee, right knee
+- Left ankle, right ankle
+
+Số khớp hợp lệ tối thiểu để thực hiện Procrustes alignment là 8.
+
+### 7.2. Chuẩn hóa đơn vị
+
+Dữ liệu GT của MPI-INF-3DHP được lưu bằng millimeter, trong khi dữ liệu WHAM được lưu bằng meter.
+
+Trước khi tính sai số, GT được chuyển đổi sang meter:
+
+\[
+X_{GT}^{(m)}=\frac{X_{GT}^{(mm)}}{1000}
+\]
+
+PA-MPJPE được tính bằng meter trong quá trình alignment và được chuyển sang millimeter khi lưu vào mạng.
+
+### 7.3. Procrustes alignment
+
+Dự đoán được căn chỉnh với GT bằng phép biến đổi similarity gồm:
+
+- Translation.
+- Rotation.
+- Uniform scaling.
+
+Sau khi căn chỉnh, PA-MPJPE được tính bằng trung bình khoảng cách Euclidean giữa các khớp hợp lệ.
+
+Residual sau alignment được lưu lại để tính temporal residual consistency cost.
+
+## 8. Cấu trúc mã nguồn
+
+| Module | Chức năng |
+|---|---|
+| `pose_assoc/costs.py` | Tham số chi phí `CostParams`, Procrustes alignment, PA-MPJPE, temporal residual cost |
+| `pose_assoc/network.py` | Xây dựng mạng time-expanded, các nút, cung và trọng số; `apply_params()` |
+| `pose_assoc/solvers/single_mcf.py` | Giải đường đi ngắn nhất độc lập bằng dynamic programming |
+| `pose_assoc/solvers/multi_mcf.py` | Kiểm tra xung đột detection, giải MILP khi cần, ghi trạng thái HiGHS |
+| `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay |
+| `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest |
+| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation |
+| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame) |
+| `scripts/solve_mc_mcf.py` | Script shortest-path độc lập cho trường hợp một người GT |
+| `configs/splits.json` | Manifest các sequence validation / test |
+| `configs/default.yaml` | Tham số mặc định (mục `association`) |
+
+`solve_mc_mcf.py` là một script giải bài toán một người GT theo cách riêng. Nó hữu ích để kiểm tra và đối chiếu với trường hợp single-commodity, nhưng không thay thế bộ xây dựng mạng và solver multi-commodity của framework.
+
+## 9. Cài đặt và chạy
+
+Cần Python ≥ 3.9. Các lệnh dưới đây chạy từ thư mục gốc của repo.
+
+```bash
+python3 -m pip install --user -r requirements.txt
 ```
 
-## 10. Tổ chức dữ liệu
+Gán nhãn tay (hỏi validation hay test, bỏ qua sequence đã có `mapping.txt`):
 
-Các file dữ liệu gốc cần được lưu trữ tách biệt với dữ liệu đã qua xử lý.
-
-Ví dụ:
-
-```text
-data/raw/mpi_inf_3dhp/
-│
-├── wham_predictions/
-│   ├── RA-WHAM_thongTinVideo_cam1.csv
-│   ├── RA-WHAM_thongTinVideo_cam2.csv
-│   └── ...
-│
-└── ground_truth/
-    ├── thongTinVideo_cam1.csv
-    ├── thongTinVideo_cam2.csv
-    └── ...
+```bash
+python3 scripts/wham_gt_mapping.py
 ```
 
-Dữ liệu đã xử lý, kết quả gán định danh trung gian và đầu ra thực nghiệm không được ghi đè lên các file CSV gốc.
+Dựng mạng và giải cho một sequence hoặc cả một tập:
 
-Các bộ dữ liệu dung lượng lớn và kết quả được tạo ra trong quá trình thực nghiệm nhìn chung không nên đưa trực tiếp vào Git.
-
-Vị trí lưu trữ, hướng dẫn tải xuống và quy trình tạo dữ liệu cần được mô tả riêng để bảo đảm khả năng tái lập thí nghiệm.
-
-## 11. Khả năng tái lập thực nghiệm (Reproducibility)
-
-Mỗi thí nghiệm cần ghi lại đầy đủ các thông tin sau:
-
-- Định danh bộ dữ liệu và chuỗi video.
-- Định danh camera.
-- Mô hình và cấu hình suy luận (Inference Configuration).
-- Cấu hình ánh xạ khớp (Joint Mapping).
-- Quy ước về hệ tọa độ và đơn vị đo.
-- Phương pháp chuẩn hóa chi phí.
-- Giá trị của α, β và γ.
-- Trọng số thời gian và mức phạt đối với các phát hiện không được gán hoặc người bị bỏ sót.
-- Bộ giải tối ưu hóa (Solver) và cấu hình của bộ giải.
-- Các chỉ số validation và evaluation.
-
-Kết quả tìm kiếm tham số cần được xuất ra định dạng CSV để thuận tiện cho việc phân tích tiếp theo.
-
-Ví dụ:
-
-```text
-outputs/
-└── parameter_search/
-    └── mpi_validation_results.csv
+```bash
+python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07
 ```
 
-## 12. Các giai đoạn phát triển hiện tại
+```bash
+python3 -m pose_assoc.build_network --split validation
+```
 
-Việc triển khai dự án được thực hiện theo từng giai đoạn, từ tổ chức dữ liệu đến xây dựng và đánh giá phương pháp tối ưu hóa.
+Kết quả nằm ở `outputs/network/<sequence>/` (`nodes.csv`, `arcs.csv`, `assignment.csv`, `summary.json`). Có thể ghi đè tham số bằng `--alpha`, `--gamma`, `--c-fp`, `--c-fn`, `--c-disappear`, `--c-reappear`, hoặc dùng `--config` với một file YAML.
 
-| Giai đoạn | Công việc | Trạng thái |
-|---|---|---|
-| 1 | Tổ chức dữ liệu WHAM và GT của MPI-INF-3DHP | Planned |
-| 2 | Xây dựng bộ nạp dữ liệu WHAM CSV | Planned |
-| 3 | Xây dựng bộ nạp dữ liệu MPI Ground Truth CSV | Planned |
-| 4 | Ánh xạ khớp và kiểm tra hệ tọa độ | Planned |
-| 5 | Xây dựng các hàm tính chi phí thành phần | Planned |
-| 6 | Xây dựng mạng MC-MCF và các ràng buộc | Planned |
-| 7 | Tìm kiếm tham số α, β và γ | Planned |
-| 8 | Đánh giá phương pháp và kết quả thực nghiệm | Planned |
+Hiệu chỉnh tham số trên các sequence validation đã gán nhãn:
 
----
+```bash
+python3 -m pose_assoc.tune
+```
 
-**Mục tiêu dài hạn:** Xây dựng một khuôn khổ nghiên cứu có khả năng đánh giá, phân tích và cải thiện độ tin cậy trong phát hiện người và duy trì định danh người của các mô hình Monocular 3D Human Pose Estimation, thông qua các phương pháp tối ưu hóa có xét đến thông tin hình học và tính liên tục theo thời gian.
+Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning/round_<n>.yaml` và có thể dùng lại qua `--config`.
+
+## 10. Giới hạn và các giả định hiện tại
+
+1. **GT được sử dụng làm tham chiếu khi tính chi phí pose.** Framework hiện tại đánh giá và lựa chọn detection dựa trên PA-MPJPE so với pose GT. Đây là thiết lập có giám sát, không phải phương pháp suy luận hoàn toàn không cần GT.
+
+2. **Temporal cost không phải vận tốc vật lý.** Nó đo sự thay đổi của residual sau Procrustes alignment, không trực tiếp mô hình hóa chuyển động thực của người.
+
+3. **Frame gap chỉ được chuẩn hóa ở temporal cost.** Temporal cost chia cho \(\Delta t^{p}\). \(C_{\mathrm{disappear}}\) và \(C_{\mathrm{reappear}}\) vẫn tính như một bước chuyển thông thường, dù hai lớp cách nhau nhiều frame. Chưa có ngưỡng ngắt chuỗi khi \(\Delta t\) quá lớn.
+
+4. **Temporal cost bằng 0 khi không đủ khớp hợp lệ.** Nếu số khớp hợp lệ chung giữa hai trạng thái nhỏ hơn 8, hàm `motion_rms()` trả về 0. Điều này tránh lỗi tính toán nhưng cũng có thể làm mất tín hiệu temporal ở các trường hợp thiếu dữ liệu.
+
+5. **MILP có giới hạn thời gian.** Khi bộ giải trả về nghiệm khả thi trước khi chứng minh tối ưu, kết quả vẫn được sử dụng nhưng được đánh dấu `optimal = false` kèm `mip_gap` (xem mục 5.2).
+
+6. **Chi phí false positive được tính trên toàn bộ detection đầu vào.** Các detection không được sử dụng đều góp vào \(N_{FP}\), kể cả khi chúng không trở thành một nút ứng viên hợp lệ cho bất kỳ người GT nào.
+
+7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần \(C_{\mathrm{root}}\) (vị trí pelvis 3D) và \(C_{2D}\) (sai số tái chiếu dùng calib camera) chưa được cài đặt.
+
+## 11. Định hướng phát triển
+
+Các hướng mở rộng có thể được nghiên cứu và đánh giá thêm:
+
+- Bổ sung chi phí vị trí gốc 3D và tái chiếu 2D vào chi phí đơn.
+- Chuẩn hóa \(C_{\mathrm{disappear}}\), \(C_{\mathrm{reappear}}\) theo \(\Delta t\), hoặc ngắt chuỗi khi \(\Delta t\) vượt ngưỡng.
+- Bổ sung các đặc trưng hình học và động học độc lập với GT.
+- Đánh giá độ nhạy của nghiệm đối với các tham số pose, temporal, FP và FN.
+- So sánh DP, MILP và các phương pháp tối ưu hóa khác về thời gian giải và chất lượng nghiệm.
+- Đánh giá khả năng tổng quát hóa từ MPI-INF-3DHP sang dữ liệu đa người như Harmony4D.
+- Nghiên cứu các ràng buộc nhận dạng và tính liên tục của người trong trường hợp nhiều người tương tác hoặc che khuất.
+
+## 12. Tóm tắt
+
+Framework xây dựng một mạng time-expanded với một luồng đơn vị cho mỗi người GT. Chi phí pose, temporal residual và các chi phí chuyển trạng thái được kết hợp trong một hàm mục tiêu tuyến tính.
+
+Với một người GT, bài toán được giải chính xác bằng dynamic programming. Với nhiều người GT, framework trước tiên tìm các đường đi độc lập bằng DP; nếu các đường đi không xung đột detection, nghiệm đó được chấp nhận. Nếu xuất hiện xung đột, bài toán được giải bằng MILP với ràng buộc dung lượng detection dùng chung, và trạng thái tối ưu của HiGHS được ghi lại cùng kết quả.
+
+Cách tiếp cận này kết hợp ưu điểm của shortest-path trên DAG và tối ưu hóa nguyên hỗn hợp để xử lý bài toán gán detection có nhiều đối tượng GT.
