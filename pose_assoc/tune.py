@@ -33,6 +33,7 @@ import itertools
 import json
 import pickle
 import time
+import warnings
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
@@ -208,23 +209,27 @@ def load_cached(reg: dict) -> list[dict]:
 # ============================================================
 
 
-def score_one(d: dict, p: CostParams, wrong_penalty: float) -> tuple[float, np.ndarray]:
+def score_one(d: dict, p: CostParams, wrong_penalty: float) -> tuple[float, np.ndarray, bool]:
     net = apply_params(d["net"], p)
-    flow, _ = solve_network(net)
+    with warnings.catch_warnings():          # đếm ở evaluate_params thay vì in ra
+        warnings.simplefilter("ignore")
+        flow, info = solve_network(net)
     chosen = d["status"][np.asarray(net.heads)[flow == 1]]
     counts = np.bincount(chosen[chosen >= 0], minlength=4)
     n = counts.sum()
-    return (counts[0] + counts[1] - wrong_penalty * counts[2]) / n, counts
+    return (counts[0] + counts[1] - wrong_penalty * counts[2]) / n, counts, info["optimal"]
 
 
 def evaluate_params(data: list[dict], p: CostParams, wrong_penalty: float) -> dict:
     """Điểm = trung bình các sequence (mỗi sequence trọng số như nhau)."""
-    per_seq, total = {}, np.zeros(4, int)
+    per_seq, total, non_optimal = {}, np.zeros(4, int), 0
     for d in data:
-        s, c = score_one(d, p, wrong_penalty)
+        s, c, opt = score_one(d, p, wrong_penalty)
         per_seq[d["name"]] = s
         total += c
-    row = {"score": float(np.mean(list(per_seq.values())))}
+        non_optimal += not opt
+    row = {"score": float(np.mean(list(per_seq.values()))),
+           "non_optimal": non_optimal}   # số sequence MILP hết giờ, chưa chứng minh tối ưu
     row.update({k: int(v) for k, v in zip(STATUS, total)})
     row.update({f"score[{k}]": v for k, v in per_seq.items()})
     return row
