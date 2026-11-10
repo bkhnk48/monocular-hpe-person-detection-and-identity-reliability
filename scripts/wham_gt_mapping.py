@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -351,7 +352,7 @@ def render_animation(poses: dict, skel_name: str, n_frames: int, fps: float,
     print(f"\r  Đã vẽ {out.name}: {n_frames} frame        ")
 
 # ============================================================
-# 6. VIDEO: FPS, GHÉP, MỞ
+# 6. VIDEO: FPS, GHÉP (CÓ SỐ FRAME), MỞ
 # ============================================================
 
 
@@ -366,22 +367,68 @@ def video_info(path: Path) -> tuple[float, float]:
     return float(num) / float(den), float(info["format"]["duration"])
 
 
-def combine_videos(videos: list[Path], out: Path, fps: float):
-    """Ghép ngang 2-3 video, cùng chiều cao; video ngắn hơn giữ frame cuối."""
-    dur = max(video_info(v)[1] for v in videos)
-    parts = [f"[{i}:v]scale=-2:{VIDEO_H},fps={fps},"
-             f"tpad=stop_mode=clone:stop_duration={dur + 1:.2f}[v{i}]"
-             for i in range(len(videos))]
-    stack = "".join(f"[v{i}]" for i in range(len(videos)))
-    filt = ";".join(parts) + f";{stack}hstack=inputs={len(videos)}[out]"
-    cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-stats"]
-    for v in videos:
-        cmd += ["-i", str(v)]
-    cmd += ["-filter_complex", filt, "-map", "[out]", "-t", f"{dur:.3f}", "-an",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)]
+def panel_width(cap) -> int:
+    w, h = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+    return int(round(w * VIDEO_H / h / 2)) * 2
+
+
+def stamp(img, text: str, org, scale=1.0):
+    """Chữ trắng viền đen, đọc được trên mọi nền."""
+    for color, th in (((0, 0, 0), 6), ((255, 255, 255), 2)):
+        cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, th, cv2.LINE_AA)
+
+
+def banner(width: int, f: int, n: int) -> np.ndarray:
+    bar = np.full((44, width, 3), 32, np.uint8)
+    text = f"frame {f}  /  {n - 1}"
+    (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+    cv2.putText(bar, text, ((width - tw) // 2, 31), cv2.FONT_HERSHEY_SIMPLEX,
+                0.9, (255, 255, 255), 2, cv2.LINE_AA)
+    return bar
+
+
+def read_panels(caps, widths, last):
+    """Đọc 1 frame mỗi video; video đã hết thì giữ frame cuối."""
+    for i, cap in enumerate(caps):
+        ok, img = cap.read()
+        if ok:
+            last[i] = cv2.resize(img, (widths[i], VIDEO_H), interpolation=cv2.INTER_AREA)
+        elif last[i] is None:
+            last[i] = np.zeros((VIDEO_H, widths[i], 3), np.uint8)
+    return [p.copy() for p in last]
+
+
+def combine_videos(videos: list[Path], out: Path, fps: float, n_frames: int,
+                   has_overlay: bool):
+    """Ghép ngang 2-3 video theo đúng số frame; thêm thanh 'frame N' phía trên."""
+    caps = [cv2.VideoCapture(str(v)) for v in videos]
+    widths = [panel_width(c) for c in caps]
+    last, total_w = [None] * len(caps), sum(widths)
+    tmp = out.with_suffix(".tmp.mp4")
+    vw = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+                         (total_w, VIDEO_H + 44))
     print(f"  Ghép {len(videos)} video -> {out.name}")
-    subprocess.run(cmd, check=True)
+    for f in range(n_frames):
+        panels = read_panels(caps, widths, last)
+        if has_overlay:
+            stamp(panels[0], f"frame {f}", (16, 40))
+        vw.write(np.vstack([banner(total_w, f, n_frames), np.hstack(panels)]))
+        if f % 200 == 0:
+            print(f"\r  Ghép: {f}/{n_frames}", end="", flush=True)
+    vw.release()
+    for c in caps:
+        c.release()
+    to_h264(tmp, out)
+    print(f"\r  Đã ghép {out.name}: {n_frames} frame        ")
+
+
+def to_h264(src: Path, dst: Path):
+    """Nén lại H.264 để QuickTime/trình duyệt mở được; xoá file tạm."""
+    subprocess.run(["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", str(src),
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dst)],
+                   check=True)
+    src.unlink()
 
 
 def open_video(path: Path):
@@ -391,7 +438,116 @@ def open_video(path: Path):
         print(f"  Hãy mở video: {path}")
 
 # ============================================================
-# 7. HỎI NGƯỜI DÙNG VÀ GHI MAPPING
+# 7. CÚ PHÁP GÁN NHÃN THEO FRAME
+# ============================================================
+#   1                     cả track là người số 1
+#   x  (hoặc Enter)       cả track không phải người GT
+#   1, 2@121-125 140      mặc định người 1; frame 121-125 và 140 là người 2
+#   [0-2]->2, [3-11]->1   liệt kê từng đoạn (dạng ->, = hoặc : đều được)
+
+NOT_PERSON = ""
+RANGE_RE = re.compile(r"^\[?\s*(\d+)\s*(?:-\s*(\d+))?\s*\]?$")
+ARROW_RE = re.compile(r"^\[?\s*(\d+)\s*(?:-\s*(\d+))?\s*\]?\s*(?:->|=>|=|:)\s*(\S+)$")
+
+
+def parse_person(tok: str, names: list[str]) -> str:
+    tok = tok.strip()
+    if tok.lower() in ("x", "-", "0", "none", ""):
+        return NOT_PERSON
+    if tok.isdigit() and 1 <= int(tok) <= len(names):
+        return names[int(tok) - 1]
+    if tok in names:
+        return tok
+    raise ValueError(f"không có người GT '{tok}'")
+
+
+def parse_range(tok: str) -> tuple[int, int]:
+    m = RANGE_RE.match(tok.strip())
+    if not m:
+        raise ValueError(f"đoạn frame không hợp lệ '{tok}'")
+    a = int(m.group(1))
+    b = int(m.group(2)) if m.group(2) else a
+    if b < a:
+        raise ValueError(f"đoạn ngược '{tok}'")
+    return a, b
+
+
+def parse_item(item: str, names, rules, state):
+    """Một mục giữa hai dấu phẩy: mặc định, P@đoạn..., [a-b]->P, hoặc đoạn nối tiếp @."""
+    m = ARROW_RE.match(item)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+        rules.append((a, b, parse_person(m.group(3), names)))
+        state["at"] = None
+    elif "@" in item:
+        who, ranges = item.split("@", 1)
+        state["at"] = parse_person(who, names)
+        rules += [(*parse_range(t), state["at"]) for t in ranges.split()]
+    elif state["at"] is not None and RANGE_RE.match(item.split()[0]):
+        rules += [(*parse_range(t), state["at"]) for t in item.split()]
+    elif state["default"] is None:
+        state["default"] = parse_person(item, names)
+    else:
+        raise ValueError(f"có hai giá trị mặc định ('{item}')")
+
+
+def parse_assignment(text: str, names: list[str]):
+    """-> (người mặc định hoặc None, [(a, b, người), ...])."""
+    rules, state = [], {"default": None, "at": None}
+    items = [t.strip() for t in re.split(r"[,;]", text) if t.strip()]
+    for item in items or [""]:
+        parse_item(item, names, rules, state)
+    return state["default"], rules
+
+
+def to_ranges(frames) -> list[tuple[int, int]]:
+    """[3,4,5,9,10] -> [(3,5), (9,10)]"""
+    out = []
+    for f in sorted(frames):
+        if out and f == out[-1][1] + 1:
+            out[-1] = (out[-1][0], f)
+        else:
+            out.append((f, f))
+    return out
+
+
+def fmt_ranges(ranges) -> str:
+    return ", ".join(f"{a}" if a == b else f"{a}-{b}" for a, b in ranges)
+
+
+def resolve_labels(track: np.ndarray, default, rules) -> dict:
+    """{frame: người} cho mọi frame của track; báo lỗi nếu ngoài track/chồng/thiếu."""
+    first, last, frames = int(track[0]), int(track[-1]), set(int(f) for f in track)
+    labels: dict = {}
+    for a, b, who in rules:
+        if a < first or b > last:
+            raise ValueError(f"đoạn {a}-{b} nằm ngoài track ({first}-{last})")
+        for f in range(a, b + 1):
+            if f in labels and labels[f] != who:
+                raise ValueError(f"frame {f} bị gán hai lần")
+            if f in frames:
+                labels[f] = who
+    missing = sorted(frames - set(labels))
+    if missing and default is None:
+        raise ValueError(f"chưa gán frame {fmt_ranges(to_ranges(missing))} "
+                         "(thêm người mặc định, ví dụ '1, ...')")
+    labels.update({f: default for f in missing})
+    return dict(sorted(labels.items()))
+
+
+def segments(labels: dict) -> list[tuple[int, int, str, int]]:
+    """Gộp các frame liên tiếp (theo thứ tự track) cùng người: (đầu, cuối, người, số frame)."""
+    segs = []
+    for f, who in labels.items():
+        if segs and segs[-1][2] == who:
+            a, _, _, n = segs[-1]
+            segs[-1] = (a, f, who, n + 1)
+        else:
+            segs.append((f, f, who, 1))
+    return segs
+
+# ============================================================
+# 8. HỎI NGƯỜI DÙNG VÀ GHI MAPPING
 # ============================================================
 
 
@@ -399,65 +555,95 @@ def print_mapping_help(summary: pd.DataFrame, names: list[str]):
     print("\n  body_id   frame đầu - cuối   số frame")
     for bid, r in summary.iterrows():
         print(f"  {bid:>7}   {r['first']:>6} - {r['last']:<6}   {r['frames']:>7}")
-    print("\n  Người trong Ground Truth:")
-    for i, n in enumerate(names, 1):
-        print(f"    {i}. {n}")
-    print("\n  Nhập số thứ tự hoặc tên người GT. Enter = không phải người GT.")
-    print("  v = mở lại video, b = quay lại body_id trước, q = thoát không lưu.")
+    people = "   ".join(f"{i}. {n}" for i, n in enumerate(names, 1))
+    print(f"\n  Người trong Ground Truth:   {people}   x. không phải người")
+    print("\n  Cách nhập:")
+    print("    1                       cả track là người số 1")
+    print("    x  (hoặc Enter)         cả track không phải người GT")
+    print("    1, 2@121-125 140        mặc định người 1; frame 121-125 và 140 là người 2")
+    print("    [0-2]->2, [3-11]->1     liệt kê từng đoạn frame")
+    print("  Lệnh: v = mở lại video, b = quay lại, q = thoát không lưu")
 
 
-def parse_answer(ans: str, names: list[str]):
-    """Trả về tên GT, '' (không phải người), hoặc lệnh 'v'/'b'/'q'; None nếu sai."""
-    if ans in ("", "v", "b", "q"):
-        return ans
-    if ans.isdigit() and 1 <= int(ans) <= len(names):
-        return names[int(ans) - 1]
-    return ans if ans in names else None
+def show_segments(labels: dict):
+    print("    Kiểm tra:")
+    for a, b, who, n in segments(labels):
+        span = f"{a}" if a == b else f"{a}-{b}"
+        print(f"      {span:>11}   {who or '(không phải người)':<20} ({n} frame)")
 
 
-def ask_mapping(summary: pd.DataFrame, names: list[str], video: Path):
-    """Hỏi lần lượt từng body_id. Trả về {body_id: tên GT hoặc ''}, None nếu thoát."""
-    ids, mapping, i = list(summary.index), {}, 0
+def ask_one(bid, track: np.ndarray, names: list[str]):
+    """Hỏi 1 body_id. Trả về {frame: người} hoặc lệnh 'v'/'b'/'q'."""
+    raw = input(f"  body_id {bid} [{track[0]}-{track[-1]}] -> ").strip()
+    if raw.lower() in ("v", "b", "q"):
+        return raw.lower()
+    try:
+        labels = resolve_labels(track, *parse_assignment(raw, names))
+    except ValueError as e:
+        print(f"    ✗ {e}. Nhập lại.")
+        return None
+    persons = set(labels.values())
+    if len(persons) == 1:
+        who = persons.pop()
+        print(f"    ✓ {bid} = {who or '(không phải người GT)'} (cả track)")
+        return labels
+    show_segments(labels)
+    ok = input("    Đúng chưa? [Y/n] -> ").strip().lower() in ("", "y", "yes", "c", "co")
+    return labels if ok else None
+
+
+def ask_mapping(tracks: dict, names: list[str], video: Path):
+    """Hỏi lần lượt từng body_id. Trả về {body_id: {frame: người}}, None nếu thoát."""
+    ids, mapping, i = list(tracks), {}, 0
     while i < len(ids):
         try:
-            raw = input(f"  body_id {ids[i]} -> ").strip()
+            ans = ask_one(ids[i], tracks[ids[i]], names)
         except EOFError:
             return None
-        ans = parse_answer(raw, names)
-        if ans is None:
-            print("    Không hợp lệ, nhập lại.")
-        elif ans == "q":
+        if ans == "q":
             return None
-        elif ans == "v":
+        if ans == "v":
             open_video(video)
         elif ans == "b":
             i = max(0, i - 1)
-        else:
+        elif isinstance(ans, dict):
             mapping[ids[i]] = ans
             i += 1
     return mapping
 
 
-def confirm_mapping(mapping: dict) -> bool:
-    print("\n  Kết quả:")
-    for bid, name in mapping.items():
-        print(f"    {bid} = {name or '(không phải người GT)'}")
-    return input("  Lưu mapping.txt? [Y/n]: ").strip().lower() in ("", "y", "yes", "c", "co")
+def mapping_lines(bid, labels: dict) -> list[str]:
+    persons = list(dict.fromkeys(labels.values()))
+    if len(persons) == 1:
+        who = persons[0]
+        return [f"{bid} = {who}" if who else f"# {bid} = (không phải người GT)"]
+    lines = []
+    for who in persons:
+        rng = fmt_ranges(to_ranges(f for f, w in labels.items() if w == who))
+        lines.append(f"{bid} = {who} @ {rng}" if who
+                     else f"# {bid} = (không phải người GT) @ {rng}")
+    return lines
 
 
-def write_mapping(path: Path, mapping: dict, seq: dict):
+def write_mapping(out_dir: Path, mapping: dict, seq: dict):
     lines = ["# Ánh xạ WHAM body_id = người trong Ground Truth",
              f"# sequence: {seq['name']}",
              f"# wham_pkl: {seq['wham_pkl']}",
              f"# gt: {seq['gt']['path']}",
-             "# body_id không có dòng gán (dòng # ...) = không phải người GT"]
-    lines += [f"{b} = {n}" for b, n in mapping.items() if n]
-    lines += [f"# {b} = (không phải người GT)" for b, n in mapping.items() if not n]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"  Đã lưu: {path}")
+             "# 'id = người'          : cả track là người đó",
+             "# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)",
+             "# frame không có dòng gán = không phải người GT"]
+    for bid, labels in mapping.items():
+        lines += mapping_lines(bid, labels)
+    (out_dir / "mapping.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    rows = [(f, bid, who) for bid, labels in mapping.items() for f, who in labels.items()]
+    pd.DataFrame(rows, columns=["frame", "body_id", "person"]).sort_values(
+        ["frame", "body_id"]).to_csv(out_dir / "mapping_frames.csv", index=False)
+    print(f"  Đã lưu: {out_dir / 'mapping.txt'}")
+    print(f"  Đã lưu: {out_dir / 'mapping_frames.csv'}")
 
 # ============================================================
-# 8. XỬ LÝ MỘT SEQUENCE VÀ CHƯƠNG TRÌNH CHÍNH
+# 9. XỬ LÝ MỘT SEQUENCE VÀ CHƯƠNG TRÌNH CHÍNH
 # ============================================================
 
 
@@ -476,18 +662,22 @@ def build_videos(seq: dict, wham_df: pd.DataFrame, gt: dict, gt_skel: str,
             print(f"  Dùng lại {path.name}")
     videos = ([overlay] if has_overlay else []) + [t[0] for t in targets]
     print(f"  {'Có' if has_overlay else 'Không có'} video overlay WHAM -> ghép {len(videos)} video")
-    combined = out / "combined.mp4"
+    combined = out / "combined_frames.mp4"
     if rerender or not combined.is_file():
-        combine_videos(videos, combined, fps)
+        combine_videos(videos, combined, fps, n, has_overlay)
     return combined
+
+
+def track_frames(wham_df: pd.DataFrame) -> dict:
+    return {int(b): np.sort(g["frame_id"].to_numpy().astype(int))
+            for b, g in wham_df.groupby("body_id")}
 
 
 def process_sequence(seq: dict, manifest: dict, args) -> bool:
     """Trả về False nếu người dùng chọn thoát."""
     print(f"\n{'=' * 64}\n{seq['name']}\n{'=' * 64}")
-    mapping_path = seq["out_dir"] / "mapping.txt"
-    if mapping_path.is_file() and not args.force:
-        print(f"  Đã có {mapping_path} -> bỏ qua (dùng --force để gán lại).")
+    if (seq["out_dir"] / "mapping.txt").is_file() and not args.force:
+        print(f"  Đã có {seq['out_dir'] / 'mapping.txt'} -> bỏ qua (--force để gán lại).")
         return True
     status = sequence_status(seq)
     if status.startswith("THIẾU"):
@@ -501,14 +691,12 @@ def process_sequence(seq: dict, manifest: dict, args) -> bool:
     video = build_videos(seq, wham_df, gt, gt_skel, args.rerender)
     if not args.no_open:
         open_video(video)
-    summary = body_id_summary(wham_df)
     names = gt_names(gt)
-    print_mapping_help(summary, names)
-    mapping = ask_mapping(summary, names, video)
+    print_mapping_help(body_id_summary(wham_df), names)
+    mapping = ask_mapping(track_frames(wham_df), names, video)
     if mapping is None:
         return False
-    if confirm_mapping(mapping):
-        write_mapping(mapping_path, mapping, seq)
+    write_mapping(seq["out_dir"], mapping, seq)
     return True
 
 

@@ -1,0 +1,15 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: mpi_S8_Seq1_cam0
+# wham_pkl: /Users/thanhnt/Documents/research/ray_casting/inputs/datasets/mpi_inf_3dhpe/S8/Seq1/imageSequences/wham_video_0.pkl
+# gt: /Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat
+# body_id không có dòng gán (dòng # ...) = không phải người GT
+0 = S8
+2 = S8
+9 = S8
+17 = S8
+20 = S8
+23 = S8
+# 1 = (không phải người GT)
+# 4 = (không phải người GT)
+# 14 = (không phải người GT)
+# 16 = (không phải người GT)

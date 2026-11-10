@@ -54,3 +54,9 @@ scripts/.claude/
 # Cong cu gan nhan theo frame (chua dung)
 scripts/label_reference_server.py
 scripts/build_reference_candidates.py
+
+# Nhan gan tay: chi theo doi file mapping, bo qua video/CSV
+!outputs/mapping/
+outputs/mapping/*/*
+!outputs/mapping/*/mapping.txt
+!outputs/mapping/*/mapping_frames.csv
