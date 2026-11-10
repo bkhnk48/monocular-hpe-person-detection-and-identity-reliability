@@ -1,10 +1,5 @@
 # MC-MCF: Multi-Commodity Min-Cost Flow cho gán detection người 3D
 
-## 0. Hướng dẫn sử dụng
-
-Để biết cách cài đặt môi trường, chuẩn bị dữ liệu, cấu hình và
-chạy các chương trình trong framework MC-MCF, xem tài liệu:
-https://docs.google.com/document/d/1fUIUKLVQOlAJ9S-xI8ahBLh3dZfIocNxEP8fE2JtR_8/edit?usp=sharing
 ## 1. Giới thiệu
 
 Dự án xây dựng một framework tối ưu hóa việc gán các detection người 3D từ WHAM cho các đối tượng Ground Truth (GT), sử dụng mô hình **Multi-Commodity Min-Cost Flow (MC-MCF)** trên mạng thời gian mở rộng (*time-expanded network*).
@@ -21,47 +16,50 @@ Khác với cách lựa chọn detection độc lập tại từng frame, framew
 
 Framework hỗ trợ cả trường hợp một người GT và nhiều người GT. Với nhiều người, các đường đi của từng người được liên kết thông qua ràng buộc dung lượng detection dùng chung.
 
-## 2. Ý tưởng phương pháp
+## 2. Hướng dẫn sử dụng
 
-### 2.1. Đối tượng và detection
+Hướng dẫn thực hành chi tiết về cài đặt môi trường, chuẩn bị dữ liệu, cấu hình và chạy các chương trình MC-MCF được trình bày trong tài liệu riêng:
+
+**[MC-MCF – Hướng dẫn cài đặt và chạy chương trình](GOOGLE_DOCS_URL)**
+
+> Thay `GOOGLE_DOCS_URL` bằng đường dẫn Google Docs sau khi tài liệu được tạo.
+
+## 3. Ý tưởng phương pháp
+
+### 3.1. Đối tượng và detection
 
 Ký hiệu:
 
-- \(K\): số người GT.
-- \(t\): chỉ số frame.
-- \(d\): một detection từ WHAM.
-- \(k\): một người GT.
-- \(PA_{tkd}\): PA-MPJPE giữa detection \(d\) và người GT \(k\) tại frame \(t\).
+- `K`: số người GT.
+- `t`: chỉ số frame.
+- `d`: một detection từ WHAM.
+- `k`: một người GT.
+- `PA_tkd`: PA-MPJPE giữa detection `d` và người GT `k` tại frame `t`.
 
-Mỗi detection được xác định bằng cặp:
+Mỗi detection được xác định bằng cặp `(frame, body_id)`, tương ứng với `(t, d)`.
 
-\[
-(t,d)=(\text{frame},\text{body\_id})
-\]
-
-Tại mỗi frame mà người GT \(k\) xuất hiện, mạng tạo các trạng thái:
+Tại mỗi frame mà người GT `k` xuất hiện, mạng tạo các trạng thái:
 
 1. **Detected:** gán một detection WHAM cho người GT.
 2. **Missed:** không có detection nào được gán cho người GT tại frame đó.
 
 Mỗi người GT được mô hình hóa bằng một luồng đơn vị (*unit flow*) đi từ source đến sink qua các lớp frame tương ứng.
 
-### 2.2. Mạng time-expanded
+### 3.2. Mạng time-expanded
 
 Với mỗi người GT, mạng có cấu trúc:
 
-\[
-s_k \rightarrow V_{1,k}\rightarrow V_{2,k}
-\rightarrow \cdots \rightarrow V_{T,k}\rightarrow t_k
-\]
+```text
+s_k -> V_1,k -> V_2,k -> ... -> V_T,k -> t_k
+```
 
 Trong đó:
 
-- \(s_k\): source của người GT \(k\).
-- \(t_k\): sink của người GT \(k\).
-- \(V_{t,k}\): tập trạng thái của người \(k\) tại frame \(t\).
+- `s_k`: source của người GT `k`.
+- `t_k`: sink của người GT `k`.
+- `V_t,k`: tập trạng thái của người `k` tại frame `t`.
 
-Các trạng thái giữa hai frame liên tiếp trong danh sách frame của người GT được kết nối bằng các cung chuyển tiếp. Mỗi cung chuyển tiếp lưu thêm khoảng cách frame gốc \(\Delta t\) giữa hai lớp (bằng 1 nếu hai frame liền nhau).
+Các trạng thái giữa hai frame liên tiếp trong danh sách frame của người GT được kết nối bằng các cung chuyển tiếp. Mỗi cung chuyển tiếp lưu thêm khoảng cách frame gốc `Δt` giữa hai lớp (bằng 1 nếu hai frame liền nhau).
 
 Các loại cung gồm:
 
@@ -77,128 +75,107 @@ Các loại cung gồm:
 | `end_miss` | Missed → Sink |
 | `empty` | Source → Sink (người không có frame GT nào) |
 
-Các chi phí của nút và cung được lưu dưới dạng các đại lượng thô (PA-MPJPE, RMS residual, \(\Delta t\), loại cung) và được tính lại bằng `apply_params()` khi thay đổi bộ tham số, không cần dựng lại mạng.
+Các chi phí của nút và cung được lưu dưới dạng các đại lượng thô (PA-MPJPE, RMS residual, `Δt`, loại cung) và được tính lại bằng `apply_params()` khi thay đổi bộ tham số, không cần dựng lại mạng.
 
-### 2.3. Ràng buộc dùng chung detection
+### 3.3. Ràng buộc dùng chung detection
 
 Trong trường hợp nhiều người GT, mỗi người có một luồng riêng. Tuy nhiên, các luồng cùng sử dụng tập detection WHAM.
 
 Một detection chỉ được gán cho tối đa một người GT:
 
-\[
-\sum_k x_{tkd}\leq 1
-\]
+```text
+sum_k x_tkd <= 1
+```
 
-Trong đó \(x_{tkd}=1\) nếu detection \(d\) tại frame \(t\) được gán cho người \(k\).
+Trong đó `x_tkd = 1` nếu detection `d` tại frame `t` được gán cho người `k`.
 
 Đây là ràng buộc liên kết các luồng và tạo nên bản chất multi-commodity của bài toán.
 
-## 3. Hàm mục tiêu
+## 4. Hàm mục tiêu
 
 Hàm mục tiêu kết hợp chi phí pose, false positive, false negative, tính nhất quán theo thời gian, chi phí chuyển trạng thái và chi phí biên.
 
-### 3.1. Chi phí pose và gán detection
+### 4.1. Chi phí pose và gán detection
 
-Với detection \(d\) được gán cho người GT \(k\) tại frame \(t\), chi phí nút là:
+Với detection `d` được gán cho người GT `k` tại frame `t`, chi phí nút là:
 
-\[
-C_{\mathrm{det}}(t,k,d)
-=
-\alpha\frac{PA_{tkd}}{s_P}-C_{FP}
-\]
+```text
+C_det(t, k, d) = α × PA_tkd / s_P - C_FP
+```
 
 Trong đó:
 
-- \(PA_{tkd}\): PA-MPJPE, tính bằng mm.
-- \(\alpha\): trọng số pose.
-- \(s_P\): hệ số chuẩn hóa pose, mặc định 100 mm.
-- \(C_{FP}\): chi phí false positive, mặc định 0.8.
+- `PA_tkd`: PA-MPJPE, tính bằng mm.
+- `α`: trọng số pose.
+- `s_P`: hệ số chuẩn hóa pose, mặc định 100 mm.
+- `C_FP`: chi phí false positive, mặc định 0.8.
 
 Chi phí trạng thái missed:
 
-\[
-C_{\mathrm{miss}}=C_{FN}
-\]
+```text
+C_miss = C_FN
+```
 
-Trong đó \(C_{FN}\) là chi phí false negative, mặc định bằng 1.0.
+Trong đó `C_FN` là chi phí false negative, mặc định bằng 1.0.
 
 **Giải thích cách tính false positive**
 
-Code sử dụng \(-C_{FP}\) trong chi phí của mỗi detection được gán và cộng thêm một hằng số:
+Code sử dụng `-C_FP` trong chi phí của mỗi detection được gán và cộng thêm một hằng số:
 
-\[
-C_{FP}N_D
-\]
+```text
+C_FP × N_D
+```
 
-với \(N_D\) là tổng số detection trong dữ liệu đầu vào.
+với `N_D` là tổng số detection trong dữ liệu đầu vào.
 
 Do đó:
 
-\[
-\begin{aligned}
-&\sum_{\mathrm{assigned}\ d}
-\left(
-\alpha\frac{PA_d}{s_P}-C_{FP}
-\right)
-+C_{FP}N_D\\
-&=
-\sum_{\mathrm{assigned}\ d}
-\alpha\frac{PA_d}{s_P}
-+C_{FP}N_{FP}
-\end{aligned}
-\]
+```text
+sum_assigned [α × PA_d / s_P - C_FP] + C_FP × N_D
+= sum_assigned [α × PA_d / s_P] + C_FP × N_FP
+```
 
-với \(N_{FP}\) là số detection không được sử dụng.
+với `N_FP` là số detection không được sử dụng.
 
 Cách biểu diễn này giúp đưa chi phí false positive vào mô hình dưới dạng chi phí nút tuyến tính, trong khi vẫn giữ nguyên ý nghĩa của hàm mục tiêu.
 
-### 3.2. Chi phí nhất quán theo thời gian
+### 4.2. Chi phí nhất quán theo thời gian
 
-Với hai trạng thái Detected liên tiếp \(a\) và \(b\) trên đường đi của cùng một người GT, framework tính chi phí dựa trên sự thay đổi của residual sau Procrustes alignment.
+Với hai trạng thái Detected liên tiếp `a` và `b` trên đường đi của cùng một người GT, framework tính chi phí dựa trên sự thay đổi của residual sau Procrustes alignment.
 
-Residual tại frame \(t\), khớp \(j\):
+Residual tại frame `t`, khớp `j`:
 
-\[
-r_{t,j}
-=
-\hat{X}_{t,j}^{aligned}-Y_{t,j}^{GT}
-\]
+```text
+r_t,j = X_hat_aligned_t,j - Y_GT_t,j
+```
 
 Trong đó:
 
-- \(\hat{X}_{t,j}^{aligned}\): khớp dự đoán sau khi căn chỉnh với GT.
-- \(Y_{t,j}^{GT}\): khớp tương ứng trong GT.
+- `X_hat_aligned_t,j`: khớp dự đoán sau khi căn chỉnh với GT.
+- `Y_GT_t,j`: khớp tương ứng trong GT.
 
 Độ thay đổi residual giữa hai trạng thái:
 
-\[
-RMS(r_a,r_b)
-=
-\sqrt{
-\frac{1}{J}
-\sum_{j=1}^{J}
-\|r_{b,j}-r_{a,j}\|_2^2
-}
-\]
+```text
+RMS(r_a, r_b) = sqrt((1 / J) × sum_j ||r_b,j - r_a,j||_2^2)
+```
 
 Chỉ các khớp hợp lệ ở cả hai frame mới được sử dụng. Nếu có ít hơn 8 khớp hợp lệ, hàm trả về 0.
 
 Chi phí temporal:
 
-\[
-C_{\mathrm{temporal}}(a,b)
-=
-\gamma\frac{RMS(r_a,r_b)}{s_M\,(\Delta t_{ab})^{p}}
-\]
+```text
+C_temporal(a, b) = γ × RMS(r_a, r_b) / (s_M × (Δt_ab)^p)
+```
 
 Trong đó:
 
-- \(\gamma\): trọng số temporal.
-- \(s_M\): hệ số chuẩn hóa temporal, mặc định 0.05 m.
-- \(\Delta t_{ab}\ge 1\): số frame gốc giữa hai lớp \(a\) và \(b\).
-- \(p\): `gap_power`, mặc định 1. Với \(p=1\), chi phí đo *tốc độ* thay đổi residual trên mỗi frame, nên một khoảng trống 10 frame không bị phạt như một bước nhảy giữa hai frame liền nhau. Đặt \(p=0\) để bỏ qua \(\Delta t\).
+- `γ`: trọng số temporal.
+- `s_M`: hệ số chuẩn hóa temporal, mặc định 0.05 m.
+- `Δt_ab >= 1`: số frame gốc giữa hai lớp `a` và `b`.
+- `p`: `gap_power`, mặc định 1. Với `p = 1`, chi phí đo *tốc độ* thay đổi residual trên mỗi frame, nên một khoảng trống 10 frame không bị phạt như một bước nhảy giữa hai frame liền nhau. Đặt `p = 0` để bỏ qua `Δt`.
 
-Khi mọi frame GT liền nhau (\(\Delta t=1\)), công thức trùng với công thức không có \(\Delta t\). Trên các sequence đã gán nhãn (MPI S8 cam0/cam8, Harmony4D 041 cam07), mọi \(\Delta t\) đều bằng 1.
+Khi mọi frame GT liền nhau (`Δt = 1`), công thức trùng với công thức không có `Δt`. Trên các sequence đã gán nhãn (MPI S8 cam0/cam8, Harmony4D 041 cam07), mọi `Δt` đều bằng 1.
 
 **Lưu ý về ý nghĩa của temporal cost**
 
@@ -206,170 +183,140 @@ Khi mọi frame GT liền nhau (\(\Delta t=1\)), công thức trùng với công
 
 Vì vậy, trong framework này, thuật ngữ *temporal residual consistency* được sử dụng thay cho *physical motion smoothness*.
 
-### 3.3. Chi phí chuyển trạng thái
+### 4.3. Chi phí chuyển trạng thái
 
 Các trạng thái trên đường đi có các chi phí chuyển tiếp:
 
 | Chuyển trạng thái | Chi phí |
 |---|---:|
-| Detected → Detected | \(C_{\mathrm{temporal}}\) |
-| Detected → Missed | \(C_{\mathrm{disappear}}\) |
-| Missed → Detected | \(C_{\mathrm{reappear}}\) |
+| Detected → Detected | `C_temporal` |
+| Detected → Missed | `C_disappear` |
+| Missed → Detected | `C_reappear` |
 | Missed → Missed | 0 |
 
 Trong đó:
 
-- \(C_{\mathrm{disappear}}\): chi phí khi một người chuyển từ trạng thái detected sang missed.
-- \(C_{\mathrm{reappear}}\): chi phí khi một người chuyển từ missed sang detected.
+- `C_disappear`: chi phí khi một người chuyển từ trạng thái detected sang missed.
+- `C_reappear`: chi phí khi một người chuyển từ missed sang detected.
 
-\(C_{\mathrm{disappear}}\) và \(C_{\mathrm{reappear}}\) là chi phí cho một *sự kiện* đổi trạng thái nên không chia theo \(\Delta t\).
+`C_disappear` và `C_reappear` là chi phí cho một *sự kiện* đổi trạng thái nên không chia theo `Δt`.
 
-### 3.4. Chi phí biên
+### 4.4. Chi phí biên
 
 Mạng cho phép cấu hình riêng chi phí tại đầu và cuối chuỗi:
 
-\[
-C_{\mathrm{start}}=
-\begin{cases}
-C_{\mathrm{start,det}}, & \text{nếu trạng thái đầu là detected}\\
-C_{\mathrm{start,miss}}, & \text{nếu trạng thái đầu là missed}
-\end{cases}
-\]
+```text
+C_start = C_start_det, nếu trạng thái đầu là detected
+C_start = C_start_miss, nếu trạng thái đầu là missed
+```
 
 Tương tự:
 
-\[
-C_{\mathrm{end}}=
-\begin{cases}
-C_{\mathrm{end,det}}, & \text{nếu trạng thái cuối là detected}\\
-C_{\mathrm{end,miss}}, & \text{nếu trạng thái cuối là missed}
-\end{cases}
-\]
+```text
+C_end = C_end_det, nếu trạng thái cuối là detected
+C_end = C_end_miss, nếu trạng thái cuối là missed
+```
 
 Các chi phí biên mặc định đều bằng 0.
 
-### 3.5. Hàm mục tiêu tổng thể
+### 4.5. Hàm mục tiêu tổng thể
 
 Có thể biểu diễn hàm mục tiêu dưới dạng:
 
-\[
-\begin{aligned}
-\min \mathcal{L}={}&
-\sum_{t,k,d}x_{tkd}
-\left(
-\alpha\frac{PA_{tkd}}{s_P}-C_{FP}
-\right)\\
-&+\sum_{t,k}m_{tk}C_{FN}\\
-&+\sum_{(a,b)\in E_{dd}}
-C_{\mathrm{temporal}}(a,b)\\
-&+N_{dm}C_{\mathrm{disappear}}\\
-&+N_{md}C_{\mathrm{reappear}}\\
-&+C_{\mathrm{boundary}}+C_{FP}N_D
-\end{aligned}
-\]
+```text
+min L =
+    sum_t,k,d x_tkd × (α × PA_tkd / s_P - C_FP)
+  + sum_t,k m_tk × C_FN
+  + sum_(a,b) in E_dd C_temporal(a,b)
+  + N_dm × C_disappear
+  + N_md × C_reappear
+  + C_boundary
+  + C_FP × N_D
+```
 
 Trong đó:
 
-- \(m_{tk}=1\) nếu người \(k\) bị missed tại frame \(t\).
-- \(E_{dd}\): tập các cung Detected → Detected được sử dụng.
-- \(N_{dm}\): số cung Detected → Missed được sử dụng.
-- \(N_{md}\): số cung Missed → Detected được sử dụng.
-- \(C_{\mathrm{boundary}}\): tổng chi phí biên.
-- \(N_D\): tổng số detection đầu vào.
+- `m_tk = 1` nếu người `k` bị missed tại frame `t`.
+- `E_dd`: tập các cung Detected → Detected được sử dụng.
+- `N_dm`: số cung Detected → Missed được sử dụng.
+- `N_md`: số cung Missed → Detected được sử dụng.
+- `C_boundary`: tổng chi phí biên.
+- `N_D`: tổng số detection đầu vào.
 
 Hàm mục tiêu được tối thiểu hóa với các ràng buộc bảo toàn luồng và dung lượng detection dùng chung.
 
-## 4. Mô hình tối ưu hóa MC-MCF
+## 5. Mô hình tối ưu hóa MC-MCF
 
-### 4.1. Ràng buộc bảo toàn luồng
+### 5.1. Ràng buộc bảo toàn luồng
 
 Với mỗi người GT, luồng phải đi từ source đến sink.
 
 Tại các nút trung gian, tổng luồng đi vào bằng tổng luồng đi ra.
 
-Với biến luồng trên cung \(a\), ký hiệu \(f_a\), ràng buộc bảo toàn luồng được viết:
+Với biến luồng trên cung `a`, ký hiệu `f_a`, ràng buộc bảo toàn luồng được viết:
 
-\[
-\sum_{a\in\delta^-(v)}f_a
--
-\sum_{a\in\delta^+(v)}f_a
-=
-b_v
-\]
+```text
+sum_{a in δ-(v)} f_a - sum_{a in δ+(v)} f_a = b_v
+```
 
 Trong đó:
 
-\[
-b_v=
-\begin{cases}
--1,&v=\text{source}\\
-1,&v=\text{sink}\\
-0,&\text{các nút khác}
-\end{cases}
-\]
+```text
+b_v = -1, nếu v là source
+b_v =  1, nếu v là sink
+b_v =  0, với các nút khác
+```
 
 Mỗi người GT có một đơn vị luồng từ source đến sink.
 
-### 4.2. Ràng buộc dung lượng detection
+### 5.2. Ràng buộc dung lượng detection
 
-Với mỗi detection \((t,d)\):
+Với mỗi detection `(t, d)`:
 
-\[
-\sum_k x_{tkd}\leq 1
-\]
+```text
+sum_k x_tkd <= 1
+```
 
 Ràng buộc này bảo đảm một detection WHAM không thể được sử dụng đồng thời bởi nhiều người GT.
 
-### 4.3. Biến quyết định
+### 5.3. Biến quyết định
 
 Các biến luồng trên cung là biến nhị phân:
 
-\[
-f_a\in\{0,1\}
-\]
+```text
+f_a ∈ {0, 1}
+```
 
 Vì mỗi luồng đi qua một đường duy nhất trong mạng phân lớp, các biến này biểu diễn việc lựa chọn đường đi tương ứng với từng người GT.
 
-### 4.4. Công thức bài toán MILP
+### 5.4. Công thức bài toán MILP
 
 Sau khi xây dựng các chi phí nút và cung, bài toán được biểu diễn dưới dạng:
 
-\[
-\min_f \sum_{a\in A}w_af_a+C_{FP}N_D
-\]
+```text
+min_f sum_{a in A} w_a × f_a + C_FP × N_D
+```
 
-với:
+Với các ràng buộc:
 
-\[
-w_a=C_{\mathrm{arc}}(a)+C_{\mathrm{node}}(\mathrm{head}(a))
-\]
-
-subject to:
-
-\[
-Af=b
-\]
-
-\[
-Bf\leq \mathbf{1}
-\]
-
-\[
-f_a\in\{0,1\}
-\]
+```text
+A × f = b
+B × f <= 1
+f_a ∈ {0, 1}
+```
 
 Trong đó:
 
-- \(A\): ma trận ràng buộc bảo toàn luồng.
-- \(B\): ma trận ràng buộc dung lượng detection.
-- \(w_a\): trọng số của cung, bao gồm chi phí cung và chi phí nút đích.
-- \(C_{FP}N_D\): hằng số được cộng khi tính objective đầy đủ.
+- `A`: ma trận ràng buộc bảo toàn luồng.
+- `B`: ma trận ràng buộc dung lượng detection.
+- `w_a`: trọng số của cung, bao gồm chi phí cung và chi phí nút đích.
+- `C_FP × N_D`: hằng số được cộng khi tính objective đầy đủ.
 
-## 5. Chiến lược giải bài toán
+## 6. Chiến lược giải bài toán
 
 Framework sử dụng hai phương pháp: Dynamic Programming (DP) và Mixed-Integer Linear Programming (MILP).
 
-### 5.1. Single-commodity: Dynamic Programming
+### 6.1. Single-commodity: Dynamic Programming
 
 Với một người GT, bài toán trở thành tìm đường đi ngắn nhất trên mạng phân lớp dạng DAG.
 
@@ -377,13 +324,13 @@ Do các cung được tạo theo thứ tự topo, thuật toán có thể duyệ
 
 Độ phức tạp của bước tìm đường đi tỷ lệ tuyến tính với số nút và số cung:
 
-\[
-O(|V|+|A|)
-\]
+```text
+O(|V| + |A|)
+```
 
 Đây là nghiệm tối ưu chính xác cho trường hợp một người GT trong mô hình hiện tại.
 
-### 5.2. Multi-commodity: DP kết hợp MILP
+### 6.2. Multi-commodity: DP kết hợp MILP
 
 Khi có nhiều người GT, framework trước tiên giải độc lập từng luồng bằng DP, tức tạm thời bỏ qua ràng buộc dung lượng detection dùng chung.
 
@@ -409,29 +356,29 @@ Sau mỗi lần giải, thông tin bộ giải được ghi vào `summary.json` 
 
 Nếu MILP dừng vì hết thời gian nhưng vẫn có nghiệm khả thi, nghiệm vẫn được dùng nhưng `optimal = false`, chương trình in cảnh báo, và `pose_assoc.tune` đếm số sequence như vậy trong cột `non_optimal` của bảng kết quả. Nếu HiGHS không trả về nghiệm nào, chương trình dừng với lỗi.
 
-## 6. Các tham số mặc định
+## 7. Các tham số mặc định
 
 | Tham số | Giá trị mặc định | Ý nghĩa | Khóa trong `configs/default.yaml` (mục `association`) |
 |---|---:|---|---|
-| \(\alpha\) | 1.0 | Trọng số pose | `weights.pose` |
-| \(\gamma\) | 0.5 | Trọng số temporal residual | `weights.temporal` |
-| \(C_{FP}\) | 0.8 | Phạt false positive | `costs.false_positive` |
-| \(C_{FN}\) | 1.0 | Phạt false negative | `costs.false_negative` |
-| \(C_{\mathrm{disappear}}\) | 0.15 | Phạt Detected → Missed | `costs.disappear` |
-| \(C_{\mathrm{reappear}}\) | 0.20 | Phạt Missed → Detected | `costs.reappear` |
-| \(s_P\) | 100 mm | Pose normalization scale | `scales.pose_mm` |
-| \(s_M\) | 0.05 m | Temporal normalization scale | `scales.motion_m` |
-| \(p\) | 1.0 | Số mũ của \(\Delta t\) trong temporal cost | `temporal.gap_power` |
-| \(C_{\mathrm{start,det}}\) | 0.0 | Chi phí đầu chuỗi, detected | `boundary.start_detected` |
-| \(C_{\mathrm{start,miss}}\) | 0.0 | Chi phí đầu chuỗi, missed | `boundary.start_missed` |
-| \(C_{\mathrm{end,det}}\) | 0.0 | Chi phí cuối chuỗi, detected | `boundary.end_detected` |
-| \(C_{\mathrm{end,miss}}\) | 0.0 | Chi phí cuối chuỗi, missed | `boundary.end_missed` |
+| `α` | 1.0 | Trọng số pose | `weights.pose` |
+| `γ` | 0.5 | Trọng số temporal residual | `weights.temporal` |
+| `C_FP` | 0.8 | Phạt false positive | `costs.false_positive` |
+| `C_FN` | 1.0 | Phạt false negative | `costs.false_negative` |
+| `C_disappear` | 0.15 | Phạt Detected → Missed | `costs.disappear` |
+| `C_reappear` | 0.20 | Phạt Missed → Detected | `costs.reappear` |
+| `s_P` | 100 mm | Pose normalization scale | `scales.pose_mm` |
+| `s_M` | 0.05 m | Temporal normalization scale | `scales.motion_m` |
+| `p` | 1.0 | Số mũ của `Δt` trong temporal cost | `temporal.gap_power` |
+| `C_start_det` | 0.0 | Chi phí đầu chuỗi, detected | `boundary.start_detected` |
+| `C_start_miss` | 0.0 | Chi phí đầu chuỗi, missed | `boundary.start_missed` |
+| `C_end_det` | 0.0 | Chi phí cuối chuỗi, detected | `boundary.end_detected` |
+| `C_end_miss` | 0.0 | Chi phí cuối chuỗi, missed | `boundary.end_missed` |
 
 Các tham số được tổ chức trong `CostParams` (`pose_assoc/costs.py`) và được nạp từ cấu hình thông qua `from_config()`. Bảng này được kiểm tra tự động với `CostParams` bởi `tests/test_readme_sync.py`.
 
-## 7. Dữ liệu và tiền xử lý
+## 8. Dữ liệu và tiền xử lý
 
-### 7.1. Bộ khớp sử dụng
+### 8.1. Bộ khớp sử dụng
 
 Framework sử dụng 12 khớp chung giữa các định dạng pose:
 
@@ -444,19 +391,19 @@ Framework sử dụng 12 khớp chung giữa các định dạng pose:
 
 Số khớp hợp lệ tối thiểu để thực hiện Procrustes alignment là 8.
 
-### 7.2. Chuẩn hóa đơn vị
+### 8.2. Chuẩn hóa đơn vị
 
 Dữ liệu GT của MPI-INF-3DHP được lưu bằng millimeter, trong khi dữ liệu WHAM được lưu bằng meter.
 
 Trước khi tính sai số, GT được chuyển đổi sang meter:
 
-\[
-X_{GT}^{(m)}=\frac{X_{GT}^{(mm)}}{1000}
-\]
+```text
+X_GT (m) = X_GT (mm) / 1000
+```
 
 PA-MPJPE được tính bằng meter trong quá trình alignment và được chuyển sang millimeter khi lưu vào mạng.
 
-### 7.3. Procrustes alignment
+### 8.3. Procrustes alignment
 
 Dự đoán được căn chỉnh với GT bằng phép biến đổi similarity gồm:
 
@@ -468,7 +415,7 @@ Sau khi căn chỉnh, PA-MPJPE được tính bằng trung bình khoảng cách 
 
 Residual sau alignment được lưu lại để tính temporal residual consistency cost.
 
-## 8. Cấu trúc mã nguồn
+## 9. Cấu trúc mã nguồn
 
 | Module | Chức năng |
 |---|---|
@@ -486,7 +433,7 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 
 `solve_mc_mcf.py` là một script giải bài toán một người GT theo cách riêng. Nó hữu ích để kiểm tra và đối chiếu với trường hợp single-commodity, nhưng không thay thế bộ xây dựng mạng và solver multi-commodity của framework.
 
-## 9. Cài đặt và chạy
+## 10. Cài đặt và chạy
 
 Cần Python ≥ 3.9. Các lệnh dưới đây chạy từ thư mục gốc của repo.
 
@@ -520,35 +467,35 @@ python3 -m pose_assoc.tune
 
 Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning/round_<n>.yaml` và có thể dùng lại qua `--config`.
 
-## 10. Giới hạn và các giả định hiện tại
+## 11. Giới hạn và các giả định hiện tại
 
 1. **GT được sử dụng làm tham chiếu khi tính chi phí pose.** Framework hiện tại đánh giá và lựa chọn detection dựa trên PA-MPJPE so với pose GT. Đây là thiết lập có giám sát, không phải phương pháp suy luận hoàn toàn không cần GT.
 
 2. **Temporal cost không phải vận tốc vật lý.** Nó đo sự thay đổi của residual sau Procrustes alignment, không trực tiếp mô hình hóa chuyển động thực của người.
 
-3. **Frame gap chỉ được chuẩn hóa ở temporal cost.** Temporal cost chia cho \(\Delta t^{p}\). \(C_{\mathrm{disappear}}\) và \(C_{\mathrm{reappear}}\) vẫn tính như một bước chuyển thông thường, dù hai lớp cách nhau nhiều frame. Chưa có ngưỡng ngắt chuỗi khi \(\Delta t\) quá lớn.
+3. **Frame gap chỉ được chuẩn hóa ở temporal cost.** Temporal cost chia cho `Δt^p`. `C_disappear` và `C_reappear` vẫn tính như một bước chuyển thông thường, dù hai lớp cách nhau nhiều frame. Chưa có ngưỡng ngắt chuỗi khi `Δt` quá lớn.
 
 4. **Temporal cost bằng 0 khi không đủ khớp hợp lệ.** Nếu số khớp hợp lệ chung giữa hai trạng thái nhỏ hơn 8, hàm `motion_rms()` trả về 0. Điều này tránh lỗi tính toán nhưng cũng có thể làm mất tín hiệu temporal ở các trường hợp thiếu dữ liệu.
 
-5. **MILP có giới hạn thời gian.** Khi bộ giải trả về nghiệm khả thi trước khi chứng minh tối ưu, kết quả vẫn được sử dụng nhưng được đánh dấu `optimal = false` kèm `mip_gap` (xem mục 5.2).
+5. **MILP có giới hạn thời gian.** Khi bộ giải trả về nghiệm khả thi trước khi chứng minh tối ưu, kết quả vẫn được sử dụng nhưng được đánh dấu `optimal = false` kèm `mip_gap` (xem mục 6.2).
 
-6. **Chi phí false positive được tính trên toàn bộ detection đầu vào.** Các detection không được sử dụng đều góp vào \(N_{FP}\), kể cả khi chúng không trở thành một nút ứng viên hợp lệ cho bất kỳ người GT nào.
+6. **Chi phí false positive được tính trên toàn bộ detection đầu vào.** Các detection không được sử dụng đều góp vào `N_FP`, kể cả khi chúng không trở thành một nút ứng viên hợp lệ cho bất kỳ người GT nào.
 
-7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần \(C_{\mathrm{root}}\) (vị trí pelvis 3D) và \(C_{2D}\) (sai số tái chiếu dùng calib camera) chưa được cài đặt.
+7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần `C_root` (vị trí pelvis 3D) và `C_2D` (sai số tái chiếu dùng calib camera) chưa được cài đặt.
 
-## 11. Định hướng phát triển
+## 12. Định hướng phát triển
 
 Các hướng mở rộng có thể được nghiên cứu và đánh giá thêm:
 
 - Bổ sung chi phí vị trí gốc 3D và tái chiếu 2D vào chi phí đơn.
-- Chuẩn hóa \(C_{\mathrm{disappear}}\), \(C_{\mathrm{reappear}}\) theo \(\Delta t\), hoặc ngắt chuỗi khi \(\Delta t\) vượt ngưỡng.
+- Chuẩn hóa `C_disappear`, `C_reappear` theo `Δt`, hoặc ngắt chuỗi khi `Δt` vượt ngưỡng.
 - Bổ sung các đặc trưng hình học và động học độc lập với GT.
 - Đánh giá độ nhạy của nghiệm đối với các tham số pose, temporal, FP và FN.
 - So sánh DP, MILP và các phương pháp tối ưu hóa khác về thời gian giải và chất lượng nghiệm.
 - Đánh giá khả năng tổng quát hóa từ MPI-INF-3DHP sang dữ liệu đa người như Harmony4D.
 - Nghiên cứu các ràng buộc nhận dạng và tính liên tục của người trong trường hợp nhiều người tương tác hoặc che khuất.
 
-## 12. Tóm tắt
+## 13. Tóm tắt
 
 Framework xây dựng một mạng time-expanded với một luồng đơn vị cho mỗi người GT. Chi phí pose, temporal residual và các chi phí chuyển trạng thái được kết hợp trong một hàm mục tiêu tuyến tính.
 
