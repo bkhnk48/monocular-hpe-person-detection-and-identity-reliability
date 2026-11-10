@@ -1,5 +1,10 @@
 # MC-MCF: Multi-Commodity Min-Cost Flow cho gán detection người 3D
 
+## 0. Hướng dẫn sử dụng
+
+Để biết cách cài đặt môi trường, chuẩn bị dữ liệu, cấu hình và
+chạy các chương trình trong framework MC-MCF, xem tài liệu:
+https://docs.google.com/document/d/1fUIUKLVQOlAJ9S-xI8ahBLh3dZfIocNxEP8fE2JtR_8/edit?usp=sharing
 ## 1. Giới thiệu
 
 Dự án xây dựng một framework tối ưu hóa việc gán các detection người 3D từ WHAM cho các đối tượng Ground Truth (GT), sử dụng mô hình **Multi-Commodity Min-Cost Flow (MC-MCF)** trên mạng thời gian mở rộng (*time-expanded network*).
