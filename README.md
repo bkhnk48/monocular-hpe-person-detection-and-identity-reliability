@@ -424,7 +424,10 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 | `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay |
 | `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest |
 | `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation |
-| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame) |
+| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay` |
+| `scripts/make_overlay_pair.py` | CLI: ghép 2 video MPI 1 người thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D) |
+| `scripts/overlay_autolabel.py` | CLI: gán nhãn tự động cho video ghép theo vị trí 2D (không dùng PA-MPJPE); mẫu kiểm chứng tay theo mức che |
+| `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi |
 | `scripts/solve_mc_mcf.py` | Script shortest-path độc lập cho trường hợp một người GT |
 | `configs/splits.json` | Manifest các sequence validation / test |
 | `configs/default.yaml` | Tham số mặc định (mục `association`) |
@@ -465,6 +468,69 @@ python3 -m pose_assoc.tune
 
 Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning/round_<n>.yaml` và có thể dùng lại qua `--config`.
 
+### 10.1. Video 2 người tổng hợp từ MPI-INF-3DHP
+
+Ghép hai video 1 người X, Y theo chiều sâu: X giữ cỡ gốc và luôn đứng trước; người trong Y (có mặt nạ) được thu nhỏ hệ số `s` quanh tâm ảnh (mặc định `s = 0.5`, diện tích 1/4) và đứng sau. Mỗi người giữ nguyên chuyển động của mình; số frame là độ dài ngắn hơn trong hai video. Với cùng intrinsics, ảnh thu nhỏ quanh điểm chính `(c_x, c_y)` xấp xỉ ảnh của chính thân người Y lùi ra sau: giữ toạ độ ngang và độ cao, độ sâu `Z` thành `Z / s`. Đây không phải lùi theo tia nhìn, vì lùi theo tia nhìn thì ảnh không đổi. Sai số phối cảnh trên S8 cam0 có trung vị 1.6% chiều cao người. Vì độ cao giữ nguyên nên với camera gần nằm ngang, chân Y vẫn ở trên sàn, và người xa hơn luôn bị người gần che. Script thu nhỏ quanh tâm ảnh. Đó cũng là điểm chính mà mạng WHAM giả định, nên với WHAM phép thu nhỏ này nhất quán hoàn toàn. So với camera thật (cam0 có `c_y = 1051.4`), Y nằm cao hơn khoảng 14 px; độ lệch này là hằng số đã biết, có thể bù khi biến đổi GT. Nguồn ghi dạng `SUBJECT:CAMERA[:START]`:
+
+Mức che phụ thuộc vào việc X có đi ngang qua giữa khung hình hay không. Nên chọn frame bắt đầu bằng `--suggest`: lệnh này chỉ dùng `annot2`, không ghép video, và in các cặp `START` mà Y bị che vừa phải và nhiều lần. Các cặp bị loại khi:
+
+- X và Y cùng dòng thời gian (cùng `annot.mat`, kể cả khác camera) mà hai đoạn nguồn giao nhau hoặc cách nhau dưới `--min-gap` frame (mặc định 100). Phần giao nhau là cùng một chuỗi động tác xuất hiện hai lần trong clip. Lệnh ghép cũng từ chối các cặp như vậy, trừ khi có `--allow-overlap`. Động tác lặp lại ở hai thời điểm không giao nhau thì chưa bị loại; muốn loại cần so độ giống chuyển động (ví dụ DTW).
+- Y chạm mép khung nguồn ở quá `--max-y-cut` số frame (mặc định 0). Khi bị thu nhỏ và đặt giữa ảnh ghép, chỗ bị mép khung cắt thành một đường thẳng giữa cảnh.
+
+```bash
+python3 scripts/make_overlay_pair.py --x S8:0 --y S8:0 --frames 1500 --suggest
+```
+
+```bash
+python3 scripts/make_overlay_pair.py --x S8:0 --y S8:0:4750 --frames 1500
+```
+
+Kết quả ở `outputs/overlay/<tên>/`: `composite.mp4` (chạy WHAM trên video này), `overlay_meta.json`, `overlay_frames.csv` (frame nguồn `src_x`, `src_y`, tỉ lệ Y còn thấy `vis_y`, Y bị mép khung nguồn cắt `y_cut`) và `preview/`. Đổi hệ số thu nhỏ bằng `--y-scale`.
+
+Mặt nạ của mỗi người là phần điểm ảnh không phải phông xanh (ngưỡng `--tau`), giao với một vùng quanh khung xương 2D. Vùng này dày `--width` (mặc định 0.16) nhân cỡ người trên ảnh. Cỡ người tính theo độ sâu: `f · H / Z_pelvis`, với `H = --ref-height` (mặc định 1750 mm), `f = sqrt(f_x f_y)` khớp từ `annot3` và `annot2`, `Z_pelvis` lấy từ `annot3`. Cỡ này không đổi khi người đổi tư thế. Các clip cũ lấy cỡ người từ khung bao 2D; khung đó co lại khi ngồi xổm hoặc cúi sâu nên mặt nạ cắt mất đùi, bắp chân. `overlay_meta.json` ghi `ref_height_mm`; clip không có khoá này là clip theo cách cũ.
+
+Trước khi tạo hàng loạt, nên xem mặt nạ ở các tư thế khó (nằm, cúi sâu, dang tay). Lệnh dưới đây ghi `mask_qa.jpg`, mỗi ô gồm ảnh gốc và phần được giữ (nền tím là phần bị bỏ):
+
+```bash
+python3 scripts/make_overlay_pair.py --mask-qa outputs/overlay/ovl_*
+```
+
+Ground truth được lấy lại từ `annot.mat` của video nguồn theo frame nguồn, và ghi cùng thư mục. Mỗi file có các cột `frame, person, src_frame` cùng 14 khớp (`pelvis` và 13 khớp như `data/raw/mpi_inf_3dhp/ground_truth/*.csv`):
+
+| File | Nội dung | Dùng cho |
+|---|---|---|
+| `gt_3d.csv` | `annot3` gốc của từng người (mm, hệ camera của video nguồn) | Chi phí PA-MPJPE (bất biến dịch, xoay, tỉ lệ) |
+| `gt_3d_scene.csv` | Pose 3D trong camera của video ghép (camera X, mm): X giữ nguyên; Y tịnh tiến cứng ra sau (độ sâu khoảng `Z / s`) để pelvis chiếu đúng chỗ đã dán | `C_root` |
+| `gt_2d.csv` | Khớp 2D trên ảnh ghép (px): X là `annot2`, Y là `tâm + s·(annot2 − tâm)` | Gán nhãn tự động, `C_2D` |
+
+Intrinsics của camera X được khớp lại từ `annot3 → annot2` (không cần file calib) và ghi vào mục `gt` của `overlay_meta.json`, kèm sai số chiếu `gt_3d_scene → gt_2d`. Trên S8 cam0, pelvis của Y lệch 0 px, các khớp khác lệch trung vị khoảng 4.5 px (phối cảnh yếu). Ghi lại GT cho các clip đã có:
+
+```bash
+python3 scripts/make_overlay_pair.py --gt-only outputs/overlay/ovl_*
+```
+
+Ba file GT ở ba hệ quy chiếu khác nhau; không trộn chúng trong cùng một phép tính:
+
+- Hình dạng pose (PA-MPJPE): `gt_3d.csv`, hoặc `overlay_gt_poses()` mà pipeline đang dùng. Mỗi người ở hệ camera của video nguồn riêng, nên không dùng để tính khoảng cách giữa hai người.
+- Vị trí và khoảng cách trong cảnh: `gt_3d_scene.csv`. Pelvis chính xác, nhưng các khớp xa thân theo chiều sâu (cổ tay, khuỷu) có thể lệch vài chục px khi chiếu, vì đây là phép dời cứng.
+- Vị trí 2D trên ảnh: `gt_2d.csv` (chính xác theo phép thu nhỏ).
+
+Lệnh `--gt-only` cũng in độ chênh intrinsics giữa hai nguồn và sai số chiếu (trung vị, p95, từng khớp). Các giá trị này được ghi vào mục `gt` của `overlay_meta.json`.
+
+Sau khi chạy WHAM, thêm sequence vào `configs/splits.json` với `"gt": {"type": "mpi_overlay", "path": ".../outputs/overlay/<tên>/overlay_meta.json"}` rồi gán nhãn tự động:
+
+```bash
+python3 scripts/overlay_autolabel.py --seq <tên>
+```
+
+Lệnh này ghi `mapping.txt` và `mapping_frames.csv` cùng định dạng với gán tay, kèm `autolabel_review.csv` (các detection sát ngưỡng hoặc ở frame Y bị che quá nửa, cần xem lại). Kết quả đúng 9107/9107 detection trên video một người chưa chứng minh nhãn tự động đúng khi hai người chồng lên nhau, vì lúc bị che WHAM có thể "bịa" vị trí các khớp bị che. Vì vậy lệnh còn ghi `autolabel_audit.csv`, một mẫu ngẫu nhiên phân tầng theo mức che (`khong_che`, `che_vua`, `che_nang`). Điền cột `manual_person` bằng tay (tên người, hoặc `x` nếu không phải người GT), rồi chấm độ đúng theo từng mức che:
+
+```bash
+python3 scripts/overlay_autolabel.py --audit-score outputs/mapping/<tên>/autolabel_audit.csv
+``` Không cần truyền `--calib`. Bản WHAM ở `../WHAM` luôn tính pose và vị trí hệ camera (`verts`, `trans`) bằng intrinsics heuristic `f = sqrt(W² + H²)` với điểm chính ở tâm ảnh, kể cả khi chạy với `--calib`; calib chỉ được đưa vào DPVO/SLAM. Kiểm trên H4D cam07 (calib `f_x = 1758.7`): `verts` chỉ khớp keypoint ViTPose khi chiếu bằng `f = 4405.7`.
+
+Khi chạy WHAM trên video ghép, nếu truyền calib thì dùng calib của camera X (nền tĩnh mà DPVO theo dõi là của X). Không dùng calib của Y, và không có calib "tổng hợp" nào đúng cho cả hai người.
+
 ## 11. Giới hạn và các giả định hiện tại
 
 1. **GT được sử dụng làm tham chiếu khi tính chi phí pose.** Framework hiện tại đánh giá và lựa chọn detection dựa trên PA-MPJPE so với pose GT. Đây là thiết lập có giám sát, không phải phương pháp suy luận hoàn toàn không cần GT.
@@ -480,6 +546,8 @@ Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning
 6. **Chi phí false positive được tính trên toàn bộ detection đầu vào.** Các detection không được sử dụng đều góp vào `N_FP`, kể cả khi chúng không trở thành một nút ứng viên hợp lệ cho bất kỳ người GT nào.
 
 7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần `C_root` (vị trí pelvis 3D) và `C_2D` (sai số tái chiếu dùng calib camera) chưa được cài đặt.
+
+8. **Video ghép chỉ hợp với chi phí bất biến vị trí và tỉ lệ.** Thu nhỏ người Y trong ảnh không đổi PA-MPJPE, và GT 2D được thu nhỏ theo cùng phép biến đổi. Vị trí gốc 3D của Y trong video ghép không còn là `annot3` gốc mà xấp xỉ `(X, Y, Z / s)`, cộng thêm độ lệch đã biết khi tâm thu nhỏ khác điểm chính. Ngoài ra `verts`/`trans` của WHAM nằm trong camera heuristic (`f = sqrt(W² + H²)`), không phải camera thật, nên phải quy đổi trước khi so với GT: giữ nguyên pixel, nhân độ sâu với `f_thật / f_heuristic` (`scripts/check_wham_camera.py`). Trên S8 cam0 (6259 detection đúng, GT sâu khoảng 3.5 m), so thẳng thì vị trí giữa hai hông lệch trung vị 345 cm (độ sâu gấp đôi); sau khi quy đổi thì lệch 13 cm (độ sâu +6 cm, p95 31 cm). Vì vậy muốn đánh giá `C_root` hay `C_2D` trên video ghép thì phải biến đổi GT của Y tương ứng, không dùng thẳng `annot3`. Đây là benchmark tổng hợp có kiểm soát, đặt bên cạnh dữ liệu đa người thật (Harmony4D), không thay thế.
 
 ## 12. Định hướng phát triển
 
