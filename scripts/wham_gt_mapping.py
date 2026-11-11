@@ -5,8 +5,10 @@ Gán body_id của WHAM với người thật trong Ground Truth -> mapping.txt.
 Quy trình cho mỗi sequence trong tập được chọn (validation / test) của manifest:
   1. Đã có mapping.txt -> bỏ qua.
   2. pkl WHAM -> RA-WHAM.csv -> video animation WHAM (wham_anim.mp4).
-  3. Ground Truth (annot.mat của MPI-INF-3DHP hoặc poses3d/*.npy của Harmony4D)
+  3. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D, hoặc
+     overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py)
      -> video animation GT (gt_anim.mp4).
+     Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py.
   4. Có video WHAM vẽ đè lên video gốc -> ghép 3 video; không có -> ghép 2 video.
   5. Mở video ghép, hỏi từng body_id thuộc người GT nào, ghi mapping.txt.
      body_id không được gán = không phải người GT.
@@ -288,12 +290,37 @@ def body_id_summary(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 
 
-def mpi_gt_poses(mat: Path, camera: int, person: str) -> dict:
-    """annot.mat: annot3[camera] (F, 28*3) mm, hệ toạ độ camera -> 13 khớp, mét."""
+def mpi_annot3(mat: Path, camera: int) -> np.ndarray:
+    """annot.mat: annot3[camera] (F, 28*3) mm, hệ toạ độ camera -> (F, 13, 3) mét."""
     data = loadmat(mat, squeeze_me=True, struct_as_record=False)
     ann = np.asarray(data["annot3"][camera], dtype=float)
-    ann = ann.reshape(len(ann), -1, 3)[:, list(MPI_IDX.values())] / 1000.0
+    return ann.reshape(len(ann), -1, 3)[:, list(MPI_IDX.values())] / 1000.0
+
+
+def mpi_gt_poses(mat: Path, camera: int, person: str) -> dict:
+    ann = mpi_annot3(mat, camera)
     return {f: {person: ann[f]} for f in range(len(ann)) if np.isfinite(ann[f]).all()}
+
+
+def overlay_gt_poses(meta_path: Path) -> dict:
+    """Video ghép của scripts/make_overlay_pair.py: 2 người MPI, frame nguồn theo overlay_frames.csv.
+
+    Thu nhỏ người trong ảnh không đổi pose 3D (PA-MPJPE bất biến tỉ lệ), nên dùng annot3 gốc.
+    CHỈ dùng cho phép đo hình dạng pose (PA-MPJPE). Mỗi người ở hệ camera của video nguồn
+    riêng, nên KHÔNG dùng để tính vị trí gốc hay khoảng cách giữa hai người trong cảnh:
+    việc đó dùng gt_3d_scene.csv (scripts/make_overlay_pair.py, export_gt).
+    """
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    base = meta_path.parent
+    frames = pd.read_csv(base / meta["frames_csv"])
+    poses: dict = {}
+    for name, p in meta["persons"].items():
+        ann = mpi_annot3((base / p["annot"]).resolve(), int(p["camera"]))
+        src = frames[p["src_col"]].to_numpy()
+        for f, s in zip(frames["frame"].to_numpy(), src):
+            if np.isfinite(ann[s]).all():
+                poses.setdefault(int(f), {})[name] = ann[s]
+    return poses
 
 
 def h4d_gt_poses(poses_dir: Path) -> dict:
@@ -314,6 +341,8 @@ def load_gt(gt: dict) -> tuple[dict, str]:
         return mpi_gt_poses(gt["path"], int(gt["camera"]), str(gt["person"])), "mpi13"
     if gt["type"] == "harmony4d":
         return h4d_gt_poses(gt["path"]), "coco17"
+    if gt["type"] == "mpi_overlay":
+        return overlay_gt_poses(gt["path"]), "mpi13"
     raise ValueError(f"gt.type không hỗ trợ: {gt['type']}")
 
 
