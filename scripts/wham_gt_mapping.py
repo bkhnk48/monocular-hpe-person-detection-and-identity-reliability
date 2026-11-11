@@ -123,6 +123,8 @@ def load_manifest(path: Path) -> dict:
 
 
 def sequence_status(seq: dict) -> str:
+    if seq.get("skip") is True:
+        return "SKIP (skip=true)"
     if (seq["out_dir"] / "mapping.txt").is_file():
         return "đã có mapping"
     if not seq["gt"]["path"].exists():
@@ -731,6 +733,10 @@ def track_frames(wham_df: pd.DataFrame) -> dict:
 
 def process_sequence(seq: dict, manifest: dict, args) -> bool:
     """Trả về False nếu người dùng chọn thoát."""
+    if seq.get("skip") is True:
+        print(f"\n[SKIP] {seq['name']} (skip=true trong manifest)")
+        return True
+    
     print(f"\n{'=' * 64}\n{seq['name']}\n{'=' * 64}")
     if (seq["out_dir"] / "mapping.txt").is_file() and not args.force:
         print(f"  Đã có {seq['out_dir'] / 'mapping.txt'} -> bỏ qua (--force để gán lại).")
