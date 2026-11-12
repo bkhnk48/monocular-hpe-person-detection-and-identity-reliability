@@ -9,6 +9,8 @@ Mỗi lần chạy:
        - đã có nhưng nhãn đổi     -> tính lại với mapping_frames.csv mới
        - trùng một sequence test  -> từ chối
        - đã bị loại (--exclude)   -> bỏ qua
+       - "skip": true trong manifest -> không thêm, không cập nhật; nếu đã đăng ký
+                                    từ lần trước thì cache vẫn được dùng (bỏ hẳn: --exclude)
      Khoá của sequence = Drive File ID của wham_pkl ("drive:<id>"),
      hoặc đường dẫn pkl cục bộ ("local:<path>") nếu manifest ghi đường dẫn.
   3. Quét lưới hệ số trên TOÀN BỘ sequence đã đăng ký (mọi lần cộng lại),
@@ -43,9 +45,9 @@ import pandas as pd
 import yaml
 from scipy.ndimage import uniform_filter
 
-from .build_network import REPO, load_inputs, load_params, mapping_module
+from .build_network import REPO, is_skipped, load_inputs, load_params, mapping_module
 from .costs import CostParams
-from .evaluation import load_truth
+from .evaluation import load_truth_by_person, require_truth_by_person
 from .network import apply_params, build_network
 from .solvers.multi_mcf import solve_network
 
@@ -122,6 +124,7 @@ def set_excluded(reg: dict, names: list[str], value: bool):
 
 def node_status(net, truth: dict) -> np.ndarray:
     """Mã trạng thái của mỗi nút nếu được chọn: -1 nguồn/đích, 0..3 theo STATUS."""
+    require_truth_by_person(truth)
     out = np.full(len(net.nodes), -1)
     for n in net.nodes:
         ids = truth.get((n["frame"], n["person"]), set())
@@ -135,7 +138,7 @@ def node_status(net, truth: dict) -> np.ndarray:
 def prepare_sequence(mod, manifest: dict, seq: dict, base: CostParams) -> dict:
     dets, gt = load_inputs(mod, manifest, seq)
     net = build_network(dets, gt, base)
-    truth = load_truth(seq["out_dir"] / "mapping_frames.csv")
+    truth = load_truth_by_person(seq["out_dir"] / "mapping_frames.csv")
     data = {"name": seq["name"], "net": net, "status": node_status(net, truth)}
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with open(cache_path(seq_key(seq)), "wb") as f:
@@ -147,6 +150,8 @@ def prepare_sequence(mod, manifest: dict, seq: dict, base: CostParams) -> dict:
 def classify(seq: dict, key: str, reg: dict, test_keys: set) -> str:
     if key in test_keys:
         return "test"
+    if is_skipped(seq):
+        return "skip"
     e = reg["sequences"].get(key)
     if e is None:
         return "new" if mapping_signature(seq) else "unlabeled"
@@ -162,7 +167,17 @@ MESSAGES = {"new": "mới            -> dựng mạng",
             "known": "ĐÃ CÓ (lần {r}) -> bỏ qua, dùng dữ liệu đã lưu",
             "excluded": "ĐÃ BỊ LOẠI     -> bỏ qua",
             "unlabeled": "chưa có mapping_frames.csv -> bỏ qua (gán nhãn trước)",
+            "skip": "skip=true      -> bỏ qua, không thêm hay cập nhật",
             "test": "TRÙNG TẬP TEST -> TỪ CHỐI (không chỉnh trên dữ liệu test)"}
+SKIP_REGISTERED = ("{msg}; đã đăng ký từ lần {r} nên dữ liệu đã lưu vẫn được dùng "
+                   "(bỏ hẳn: --exclude {name})")
+
+
+def state_message(state: str, seq: dict, old: dict) -> str:
+    msg = MESSAGES[state].format(r=old.get("added_round"))
+    if state == "skip" and old and not old.get("excluded"):
+        msg = SKIP_REGISTERED.format(msg=msg, r=old.get("added_round"), name=seq["name"])
+    return msg
 
 
 def register_validation(mod, manifest: dict, reg: dict, base: CostParams, rnd: int) -> int:
@@ -177,7 +192,7 @@ def register_validation(mod, manifest: dict, reg: dict, base: CostParams, rnd: i
         seen.add(key)
         state = classify(seq, key, reg, test_keys)
         old = reg["sequences"].get(key, {})
-        print(f"  {seq['name']:<28} " + MESSAGES[state].format(r=old.get("added_round")))
+        print(f"  {seq['name']:<28} " + state_message(state, seq, old))
         if state in ("new", "changed"):
             prepare_sequence(mod, manifest, seq, base)
             reg["sequences"][key] = {
