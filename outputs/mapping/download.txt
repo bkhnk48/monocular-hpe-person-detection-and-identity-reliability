@@ -1,0 +1,7 @@
+Toan bo noi dung cac mapping da duoc tao, co the xem o day:
+https://drive.google.com/drive/folders/1r8-HQ_gYmS-MkB6a8HsOa6ITn9wu3MIg?usp=sharing
+Chu y rang, moi khi chay lenh:
+     python3 scripts/wham_gt_mapping.py --split validation --force
+    thi tham so --force se quet lai toan bo splits.json, ghi de toan bo noi dung
+
+Dieu do giai thich tai sao thu muc mapping tren kia, lai co nhieu folder den vay.

@@ -1,0 +1,16 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: mpi_S8_Seq1_cam4
+# wham_pkl: 1WwAgFP1vU8C40UutRvgS2CrF-59D1hQ1
+# gt: /Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+0 = S8
+6 = S8
+19 = S8
+25 = S8
+44 = S8
+# 50 = (không phải người GT)
+66 = S8
+69 = S8
+73 = S8

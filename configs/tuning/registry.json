@@ -1,0 +1,151 @@
+{
+  "sequences": {
+    "drive:1eowaidAe9lcGgSFLEppv49E9NTUT2Jtp": {
+      "name": "mpi_S8_Seq1_cam0",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+      "mapping_sig": "2f498fa3c81bcad6",
+      "excluded": false,
+      "added_round": 1,
+      "updated_round": 1
+    },
+    "drive:1xvacdsfs4Ap98PP72TvJGaREnUQ4Wkco": {
+      "name": "mpi_S8_Seq1_cam8",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+      "mapping_sig": "f45ad1f7a157d11a",
+      "excluded": false,
+      "added_round": 1,
+      "updated_round": 1
+    },
+    "drive:1AkjHAIGhlvjHKjsZ9OVHpOurK26PoB8-": {
+      "name": "mpi_S8_Seq1_cam7",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+      "mapping_sig": "cc2bd38c44d646c7",
+      "excluded": false,
+      "added_round": 2,
+      "updated_round": 2
+    },
+    "drive:1np-o_9zSccQQOiOwXTckGawirZjqDQxV": {
+      "name": "mpi_S8_Seq1_cam6",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/annot.mat",
+      "mapping_sig": "29944445daa07b3e",
+      "excluded": false,
+      "added_round": 2,
+      "updated_round": 2
+    },
+    "drive:1CSBmSMopCow0wGBkNuSyPymyzQsLYfB_": {
+      "name": "mpi_S1_Seq1_cam8",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+      "mapping_sig": "a08a86098704ffd5",
+      "excluded": false,
+      "added_round": 3,
+      "updated_round": 3
+    },
+    "drive:1bHV4zbKYRuZNYaW6zGwBSVXJKqnGaCbx": {
+      "name": "mpi_S1_Seq1_cam1",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+      "mapping_sig": "c9d3ac555a374d2a",
+      "excluded": false,
+      "added_round": 3,
+      "updated_round": 3
+    },
+    "drive:1_WUtbszaKVeeSbc2tJGdiXB5f7UVEDdP": {
+      "name": "mpi_S1_Seq1_cam0",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+      "mapping_sig": "efedacc61db2b978",
+      "excluded": false,
+      "added_round": 3,
+      "updated_round": 3
+    },
+    "drive:1WwAgFP1vU8C40UutRvgS2CrF-59D1hQ1": {
+      "name": "mpi_S8_Seq1_cam4",
+      "gt": "/Users/thanhnt/Documents/research/monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+      "mapping_sig": "fad4a36f7b66f713",
+      "excluded": false,
+      "added_round": 3,
+      "updated_round": 3
+    }
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "date": "2026-11-10T20:59:19",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8"
+      ],
+      "params": {
+        "alpha": 0.5,
+        "gamma": 0.1,
+        "c_fp": 2.5,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9811379097093382,
+      "file": "configs/tuning/round_1.yaml"
+    },
+    {
+      "round": 2,
+      "date": "2026-11-10T21:20:03",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6"
+      ],
+      "params": {
+        "alpha": 0.5,
+        "gamma": 0.1,
+        "c_fp": 2.5,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9905689548546691,
+      "file": "configs/tuning/round_2.yaml"
+    },
+    {
+      "round": 3,
+      "date": "2026-11-11T15:22:56",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4"
+      ],
+      "params": {
+        "alpha": 0.5,
+        "gamma": 0.25,
+        "c_fp": 2.5,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9952844774273346,
+      "file": "configs/tuning/round_3.yaml"
+    }
+  ]
+}
