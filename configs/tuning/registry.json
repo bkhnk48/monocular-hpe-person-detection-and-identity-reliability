@@ -146,6 +146,37 @@
       },
       "score": 0.9952844774273346,
       "file": "configs/tuning/round_3.yaml"
+    },
+    {
+      "round": 4,
+      "date": "2026-11-12T13:16:49",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4"
+      ],
+      "params": {
+        "alpha": 0.5,
+        "gamma": 0.25,
+        "c_fp": 2.5,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9952844774273346,
+      "file": "configs/tuning/round_4.yaml"
     }
   ]
 }
