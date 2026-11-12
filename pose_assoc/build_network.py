@@ -16,6 +16,8 @@ Chạy từ thư mục gốc repo:
   python3 -m pose_assoc.build_network --seq mpi_S8_Seq1_cam0
   python3 -m pose_assoc.build_network --split validation
   python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --alpha 1.5 --gamma 0.3
+
+--split bỏ qua sequence có "skip": true trong manifest; --seq gọi đích danh thì vẫn chạy.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ import pandas as pd
 import yaml
 
 from .costs import LIMBS, CostParams
-from .evaluation import assignment_table, evaluate, load_truth, objective_breakdown
+from .evaluation import assignment_table, evaluate, load_truth_by_person, objective_breakdown
 from .network import arcs_frame, build_network, nodes_frame
 from .solvers.multi_mcf import solve_network
 
@@ -139,7 +141,7 @@ def run_sequence(mod, manifest: dict, seq: dict, args):
                "objective": objective_breakdown(net, flow, params)}
     truth_path = seq["out_dir"] / "mapping_frames.csv"
     if truth_path.is_file():
-        assign, summary["metrics"] = evaluate(assign, load_truth(truth_path))
+        assign, summary["metrics"] = evaluate(assign, load_truth_by_person(truth_path))
     out = args.out or REPO / "outputs" / "network" / seq["name"]
     export(Path(out), net, flow, assign, summary, not args.no_network_csv)
     print_summary(summary)
@@ -162,12 +164,32 @@ def parse_args():
     return p.parse_args()
 
 
+def is_skipped(seq: dict) -> bool:
+    """`"skip": true` trong manifest (cùng quy ước với scripts/wham_gt_mapping.py)."""
+    return seq.get("skip") is True
+
+
+def select_sequences(manifest: dict, seq_name, split) -> list:
+    """--split: bỏ các sequence skip=true. --seq: vẫn chạy (gọi đích danh), chỉ báo."""
+    if seq_name:
+        seq = find_sequence(manifest, seq_name)
+        if is_skipped(seq):
+            print(f"Lưu ý: {seq_name} có skip=true trong manifest; vẫn chạy vì gọi bằng --seq.")
+        return [seq]
+    seqs = []
+    for seq in manifest.get(split, []):
+        if is_skipped(seq):
+            print(f"\n=== {seq['name']} === skip=true trong manifest -> bỏ qua")
+        else:
+            seqs.append(seq)
+    return seqs
+
+
 def main():
     args = parse_args()
     mod = mapping_module()
     manifest = mod.load_manifest(args.manifest)
-    seqs = ([find_sequence(manifest, args.seq)] if args.seq
-            else manifest.get(args.split, []))
+    seqs = select_sequences(manifest, args.seq, args.split)
     if args.out and len(seqs) > 1:
         raise SystemExit("--out chỉ dùng với một --seq.")
     for seq in seqs:
