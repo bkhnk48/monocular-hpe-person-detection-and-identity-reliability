@@ -421,14 +421,17 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 | `pose_assoc/network.py` | Xây dựng mạng time-expanded, các nút, cung và trọng số; `apply_params()` |
 | `pose_assoc/solvers/single_mcf.py` | Giải đường đi ngắn nhất độc lập bằng dynamic programming |
 | `pose_assoc/solvers/multi_mcf.py` | Kiểm tra xung đột detection, giải MILP khi cần, ghi trạng thái HiGHS |
-| `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay |
-| `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest |
-| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation |
+| `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay. Hai định dạng nhãn, không dùng lẫn: `load_truth_by_person()` cho `evaluate()` (build_network) và tune; `load_truth()` cho `evaluate_assignment()` (`pose_assoc/compare.py`). `evaluate()` từ chối nhãn sai định dạng (`tests/test_evaluation_truth.py`) |
+| `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest; `--split` bỏ qua sequence `"skip": true` (`select_sequences()`) |
+| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation; không thêm hay cập nhật sequence `"skip": true` |
+| `pose_assoc/baselines.py` | Các baseline trên cùng mạng: B6 giữ ID gốc của WHAM (đa số phiếu), B1 tham lam theo frame, B2 Hungarian theo frame, B3 đường đi ngắn nhất độc lập (không ràng buộc dùng chung detection) |
+| `pose_assoc/compare.py` | CLI: so sánh B6/B1/B2/B3 với B4 (MC-MCF) trên các sequence đã gán nhãn của một tập, ghi `outputs/compare/<split>/table.csv` kèm macro-average |
 | `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay` |
 | `scripts/make_overlay_pair.py` | CLI: ghép 2 đoạn video MPI 1 người (`--x`/`--y START:END`, `--x-video`) thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D); `--mode generate`/`render` để sửa tay từng frame PNG rồi ghép lại MP4 |
 | `scripts/overlay_autolabel.py` | CLI: gán nhãn tự động cho video ghép theo vị trí 2D (không dùng PA-MPJPE); mẫu kiểm chứng tay theo mức che |
 | `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi; video MPI đơn (`--annot`, `--camera`) hoặc video ghép (`--meta`, GT từ `gt_3d_scene.csv`) |
 | `scripts/solve_mc_mcf.py` | Script shortest-path độc lập cho trường hợp một người GT |
+| `scripts/help` | In hướng dẫn nhanh: tạo mapping, tạo video overlay, hiệu chỉnh tham số, giải trên tập test (`python3 scripts/help [mapping\|overlay\|tune\|test]`); các tuỳ chọn được đối chiếu với `--help` của từng CLI trong `tests/test_help.py` |
 | `configs/splits.json` | Manifest các sequence validation / test |
 | `configs/default.yaml` | Tham số mặc định (mục `association`) |
 
@@ -440,6 +443,12 @@ Cần Python ≥ 3.9. Các lệnh dưới đây chạy từ thư mục gốc c�
 
 ```bash
 python3 -m pip install --user -r requirements.txt
+```
+
+Xem nhanh các bước bên dưới cùng trạng thái hiện tại (sequence nào đã gán nhãn, lần hiệu chỉnh mới nhất). Thêm `mapping`, `overlay`, `tune` hoặc `test` để chỉ in một phần:
+
+```bash
+python3 scripts/help
 ```
 
 Gán nhãn tay (hỏi validation hay test, bỏ qua sequence đã có `mapping.txt`):
@@ -458,6 +467,8 @@ python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07
 python3 -m pose_assoc.build_network --split validation
 ```
 
+Sequence có `"skip": true` trong `configs/splits.json` bị bỏ qua khi gán nhãn, khi chạy theo `--split` và khi hiệu chỉnh. Gọi đích danh bằng `--seq` thì `build_network` vẫn chạy và in lưu ý. Với `pose_assoc.tune`, `skip` chỉ ngăn thêm hoặc cập nhật sequence. Sequence đã đăng ký từ lần trước thì dữ liệu đã lưu vẫn được dùng; muốn bỏ hẳn thì dùng `--exclude <tên>`.
+
 Kết quả nằm ở `outputs/network/<sequence>/` (`nodes.csv`, `arcs.csv`, `assignment.csv`, `summary.json`). Có thể ghi đè tham số bằng `--alpha`, `--gamma`, `--c-fp`, `--c-fn`, `--c-disappear`, `--c-reappear`, hoặc dùng `--config` với một file YAML.
 
 Hiệu chỉnh tham số trên các sequence validation đã gán nhãn:
@@ -467,6 +478,17 @@ python3 -m pose_assoc.tune
 ```
 
 Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning/round_<n>.yaml` và có thể dùng lại qua `--config`.
+
+So sánh MC-MCF (B4) với các baseline trên cùng mạng và cùng nhãn tay. Chỉ chạy trên tập test sau khi đã chốt bộ tham số trên validation:
+
+```bash
+python3 -m pose_assoc.compare --split test --config configs/tuning/round_4.yaml
+```
+
+Hai chương trình dùng hai định nghĩa `accuracy` khác nhau, không so trực tiếp với nhau:
+
+- `build_network` và `tune`: `(correct + correct_miss) / (frame × người)`.
+- `compare`: `correct / (correct + wrong_id + missed)`, tức là không tính các ô bỏ trống đúng. Ví dụ trên `h4d_041_grappling2_cam07` với round 4: cùng số đếm 743 / 79 / 66 / 6, `build_network` ra 0.9195 còn `compare` ra 0.9117.
 
 ### 10.1. Video 2 người tổng hợp từ MPI-INF-3DHP
 
