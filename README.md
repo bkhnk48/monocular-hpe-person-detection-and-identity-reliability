@@ -425,9 +425,9 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 | `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest |
 | `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation |
 | `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay` |
-| `scripts/make_overlay_pair.py` | CLI: ghép 2 video MPI 1 người thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D) |
+| `scripts/make_overlay_pair.py` | CLI: ghép 2 đoạn video MPI 1 người (`--x`/`--y START:END`, `--x-video`) thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D); `--mode generate`/`render` để sửa tay từng frame PNG rồi ghép lại MP4 |
 | `scripts/overlay_autolabel.py` | CLI: gán nhãn tự động cho video ghép theo vị trí 2D (không dùng PA-MPJPE); mẫu kiểm chứng tay theo mức che |
-| `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi |
+| `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi; video MPI đơn (`--annot`, `--camera`) hoặc video ghép (`--meta`, GT từ `gt_3d_scene.csv`) |
 | `scripts/solve_mc_mcf.py` | Script shortest-path độc lập cho trường hợp một người GT |
 | `configs/splits.json` | Manifest các sequence validation / test |
 | `configs/default.yaml` | Tham số mặc định (mục `association`) |
@@ -470,22 +470,38 @@ Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning
 
 ### 10.1. Video 2 người tổng hợp từ MPI-INF-3DHP
 
-Ghép hai video 1 người X, Y theo chiều sâu: X giữ cỡ gốc và luôn đứng trước; người trong Y (có mặt nạ) được thu nhỏ hệ số `s` quanh tâm ảnh (mặc định `s = 0.5`, diện tích 1/4) và đứng sau. Mỗi người giữ nguyên chuyển động của mình; số frame là độ dài ngắn hơn trong hai video. Với cùng intrinsics, ảnh thu nhỏ quanh điểm chính `(c_x, c_y)` xấp xỉ ảnh của chính thân người Y lùi ra sau: giữ toạ độ ngang và độ cao, độ sâu `Z` thành `Z / s`. Đây không phải lùi theo tia nhìn, vì lùi theo tia nhìn thì ảnh không đổi. Sai số phối cảnh trên S8 cam0 có trung vị 1.6% chiều cao người. Vì độ cao giữ nguyên nên với camera gần nằm ngang, chân Y vẫn ở trên sàn, và người xa hơn luôn bị người gần che. Script thu nhỏ quanh tâm ảnh. Đó cũng là điểm chính mà mạng WHAM giả định, nên với WHAM phép thu nhỏ này nhất quán hoàn toàn. So với camera thật (cam0 có `c_y = 1051.4`), Y nằm cao hơn khoảng 14 px; độ lệch này là hằng số đã biết, có thể bù khi biến đổi GT. Nguồn ghi dạng `SUBJECT:CAMERA[:START]`:
+Ghép hai video 1 người X, Y theo chiều sâu: X giữ cỡ gốc và luôn đứng trước; người trong Y (có mặt nạ) được thu nhỏ hệ số `s` quanh tâm ảnh (mặc định `s = 0.5`, diện tích 1/4) và đứng sau. Mỗi người giữ nguyên chuyển động của mình; số frame là độ dài ngắn hơn trong hai video. Với cùng intrinsics, ảnh thu nhỏ quanh điểm chính `(c_x, c_y)` xấp xỉ ảnh của chính thân người Y lùi ra sau: giữ toạ độ ngang và độ cao, độ sâu `Z` thành `Z / s`. Đây không phải lùi theo tia nhìn, vì lùi theo tia nhìn thì ảnh không đổi. Sai số phối cảnh trên S8 cam0 có trung vị 1.6% chiều cao người. Vì độ cao giữ nguyên nên với camera gần nằm ngang, chân Y vẫn ở trên sàn, và người xa hơn luôn bị người gần che. Script thu nhỏ quanh tâm ảnh. Đó cũng là điểm chính mà mạng WHAM giả định, nên với WHAM phép thu nhỏ này nhất quán hoàn toàn. So với camera thật (cam0 có `c_y = 1051.4`), Y nằm cao hơn khoảng 14 px; độ lệch này là hằng số đã biết, có thể bù khi biến đổi GT.
 
-Mức che phụ thuộc vào việc X có đi ngang qua giữa khung hình hay không. Nên chọn frame bắt đầu bằng `--suggest`: lệnh này chỉ dùng `annot2`, không ghép video, và in các cặp `START` mà Y bị che vừa phải và nhiều lần. Các cặp bị loại khi:
+Mỗi người lấy một đoạn frame `START:END` (không lấy `END`) của một video nguồn: `--x 0:1500 --x-video <video>` và `--y 4750:6250`. Bỏ `--y-video` thì Y lấy từ chính video của X. Subject và camera (để đọc `annot.mat`) được suy ra từ đường dẫn dạng `.../<SUBJECT>/Seq1/imageSequences/video_cam<CAMERA>.avi`. Đường dẫn khác dạng này thì chỉ rõ bằng `--x-subject`, `--x-camera`, `--y-subject`, `--y-camera`. `--annot-pattern` mặc định chỉ trỏ tới annot của Seq1, nên video của Seq khác bị từ chối, trừ khi mẫu có `{seq}`. Số frame đầu ra là độ dài ngắn hơn của hai đoạn (giới hạn thêm bằng `--frames`). Tên thư mục và `overlay_meta.json` ghi đoạn thực sự được dùng.
+
+Mức che phụ thuộc vào việc X có đi ngang qua giữa khung hình hay không. Nên chọn frame bắt đầu bằng `--suggest`: lệnh này chỉ dùng `annot2`, không ghép video. Nó xét các vị trí bắt đầu nằm trong hai đoạn `--x`, `--y`, rồi in các cặp mà Y bị che vừa phải và nhiều lần. Các cặp bị loại khi:
 
 - X và Y cùng dòng thời gian (cùng `annot.mat`, kể cả khác camera) mà hai đoạn nguồn giao nhau hoặc cách nhau dưới `--min-gap` frame (mặc định 100). Phần giao nhau là cùng một chuỗi động tác xuất hiện hai lần trong clip. Lệnh ghép cũng từ chối các cặp như vậy, trừ khi có `--allow-overlap`. Động tác lặp lại ở hai thời điểm không giao nhau thì chưa bị loại; muốn loại cần so độ giống chuyển động (ví dụ DTW).
 - Y chạm mép khung nguồn ở quá `--max-y-cut` số frame (mặc định 0). Khi bị thu nhỏ và đặt giữa ảnh ghép, chỗ bị mép khung cắt thành một đường thẳng giữa cảnh.
 
 ```bash
-python3 scripts/make_overlay_pair.py --x S8:0 --y S8:0 --frames 1500 --suggest
+python3 scripts/make_overlay_pair.py --x 0:6468 --y 0:6468 --x-video ../WHAM/inputs/mpi_inf_3dhpe/S8/Seq1/imageSequences/video_cam0.avi --frames 1500 --suggest
 ```
 
 ```bash
-python3 scripts/make_overlay_pair.py --x S8:0 --y S8:0:4750 --frames 1500
+python3 scripts/make_overlay_pair.py --x 0:1500 --y 4750:6250 --x-video ../WHAM/inputs/mpi_inf_3dhpe/S8/Seq1/imageSequences/video_cam0.avi
 ```
 
-Kết quả ở `outputs/overlay/<tên>/`: `composite.mp4` (chạy WHAM trên video này), `overlay_meta.json`, `overlay_frames.csv` (frame nguồn `src_x`, `src_y`, tỉ lệ Y còn thấy `vis_y`, Y bị mép khung nguồn cắt `y_cut`) và `preview/`. Đổi hệ số thu nhỏ bằng `--y-scale`.
+Kết quả ở `outputs/overlay/<tên>/` (ví dụ trên: `ovl_S8c0f0-1500_S8c0f4750-6250_s0.5`): `composite.mp4` (chạy WHAM trên video này), `overlay_meta.json`, `overlay_frames.csv` (frame nguồn `src_x`, `src_y`, tỉ lệ Y còn thấy `vis_y`, Y bị mép khung nguồn cắt `y_cut`) và `preview/`. Đổi hệ số thu nhỏ bằng `--y-scale`. Trong `overlay_meta.json`, đường dẫn video và `annot.mat` là đường dẫn tương đối so với thư mục kết quả.
+
+Muốn sửa tay một số frame lỗi (ví dụ mặt nạ hụt), chạy theo hai bước. Bước 1, `--mode generate` chỉ ghi từng frame ghép thành PNG `frames_raw/000000.png`, `000001.png`, …, chưa tạo MP4. Số trong tên file là thứ tự frame của video ghép, không phải frame nguồn. Mỗi frame khoảng 3 MB ở 2048×2048, tức khoảng 4.5 GB cho 1500 frame. Chế độ mặc định `--mode all` ghi thẳng MP4 và không lưu PNG.
+
+```bash
+python3 scripts/make_overlay_pair.py --x 0:1500 --y 4750:6250 --x-video ../WHAM/inputs/mpi_inf_3dhpe/S8/Seq1/imageSequences/video_cam0.avi --mode generate
+```
+
+Sửa frame cần sửa rồi lưu vào `frames_edit/`. File phải là PNG, cùng tên và cùng kích thước với file trong `frames_raw/`. Bước 2, `--mode render` ghép lại `composite.mp4`, frame nào có trong `frames_edit/` thì dùng bản đó:
+
+```bash
+python3 scripts/make_overlay_pair.py --mode render --name ovl_S8c0f0-1500_S8c0f4750-6250_s0.5
+```
+
+Lệnh render báo các tệp trong `frames_edit/` không được dùng (đuôi `.jpg`, sai tên), và dừng nếu kích thước sai. Sau khi render, `overlay_meta.json` ghi `"video": "composite.mp4"` và danh sách `edited_frames`. `overlay_frames.csv` (`vis_y`, diện tích mặt nạ) và các file GT không đổi theo frame sửa, nên chỉ nên sửa lỗi mặt nạ, không xoá hay thêm người. Nếu chạy lại `--mode generate` vào thư mục đã có `frames_edit/`, lệnh sẽ cảnh báo vì các frame sửa cũ sẽ được dùng khi render.
 
 Mặt nạ của mỗi người là phần điểm ảnh không phải phông xanh (ngưỡng `--tau`), giao với một vùng quanh khung xương 2D. Vùng này dày `--width` (mặc định 0.16) nhân cỡ người trên ảnh. Cỡ người tính theo độ sâu: `f · H / Z_pelvis`, với `H = --ref-height` (mặc định 1750 mm), `f = sqrt(f_x f_y)` khớp từ `annot3` và `annot2`, `Z_pelvis` lấy từ `annot3`. Cỡ này không đổi khi người đổi tư thế. Các clip cũ lấy cỡ người từ khung bao 2D; khung đó co lại khi ngồi xổm hoặc cúi sâu nên mặt nạ cắt mất đùi, bắp chân. `overlay_meta.json` ghi `ref_height_mm`; clip không có khoá này là clip theo cách cũ.
 
@@ -527,9 +543,19 @@ Lệnh này ghi `mapping.txt` và `mapping_frames.csv` cùng định dạng vớ
 
 ```bash
 python3 scripts/overlay_autolabel.py --audit-score outputs/mapping/<tên>/autolabel_audit.csv
-``` Không cần truyền `--calib`. Bản WHAM ở `../WHAM` luôn tính pose và vị trí hệ camera (`verts`, `trans`) bằng intrinsics heuristic `f = sqrt(W² + H²)` với điểm chính ở tâm ảnh, kể cả khi chạy với `--calib`; calib chỉ được đưa vào DPVO/SLAM. Kiểm trên H4D cam07 (calib `f_x = 1758.7`): `verts` chỉ khớp keypoint ViTPose khi chiếu bằng `f = 4405.7`.
+```
+
+Không cần truyền `--calib`. Bản WHAM ở `../WHAM` luôn tính pose và vị trí hệ camera (`verts`, `trans`) bằng intrinsics heuristic `f = sqrt(W² + H²)` với điểm chính ở tâm ảnh, kể cả khi chạy với `--calib`; calib chỉ được đưa vào DPVO/SLAM. Kiểm trên H4D cam07 (calib `f_x = 1758.7`): `verts` chỉ khớp keypoint ViTPose khi chiếu bằng `f = 4405.7`.
 
 Khi chạy WHAM trên video ghép, nếu truyền calib thì dùng calib của camera X (nền tĩnh mà DPVO theo dõi là của X). Không dùng calib của Y, và không có calib "tổng hợp" nào đúng cho cả hai người.
+
+So vị trí WHAM (giữa hai hông, sau khi quy đổi camera) với GT trong cảnh. Ở video ghép, GT lấy từ `gt_3d_scene.csv` theo `(frame, person)` trong `mapping_frames.csv`, không lấy theo frame nguồn:
+
+```bash
+python3 scripts/check_wham_camera.py --pkl <wham_output.pkl> --meta outputs/overlay/<tên>/overlay_meta.json --mapping outputs/mapping/<tên>/mapping_frames.csv
+```
+
+Với video MPI đơn thì thay `--meta` bằng `--annot data/raw/mpi_inf_3dhp/S8/annot.mat --camera 0`.
 
 ## 11. Giới hạn và các giả định hiện tại
 
