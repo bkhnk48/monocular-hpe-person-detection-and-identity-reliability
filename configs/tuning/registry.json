@@ -63,6 +63,24 @@
       "excluded": false,
       "added_round": 3,
       "updated_round": 3
+    },
+    "drive:16Yna92FAfKzE7UmzDQi5QCTRogE7s_RK": {
+      "name": "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+      "gt": "10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF",
+      "mapping_sig": "55b94a2280bf8183",
+      "gt_signature": "mpi_overlay_csv:drive:10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF",
+      "excluded": false,
+      "added_round": 5,
+      "updated_round": 5
+    },
+    "drive:14XX7J8YbPLkFKRYRQebH3oYtCw6mMudA": {
+      "name": "mpi_S8c0f1500_S8c0f2750_s0.5_cam0",
+      "gt": "1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-",
+      "mapping_sig": "54fd29834e88c82f",
+      "gt_signature": "mpi_overlay_csv:drive:1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-",
+      "excluded": false,
+      "added_round": 5,
+      "updated_round": 5
     }
   },
   "rounds": [
@@ -177,6 +195,72 @@
       },
       "score": 0.9952844774273346,
       "file": "configs/tuning/round_4.yaml"
+    },
+    {
+      "round": 5,
+      "date": "2026-11-13T21:46:02",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 1.5,
+        "gamma": 0.0,
+        "c_fp": 2.0,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9766901905718081,
+      "file": "configs/tuning/round_5.yaml"
+    },
+    {
+      "round": 6,
+      "date": "2026-11-13T21:59:35",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 1.0,
+        "gamma": 0.0,
+        "c_fp": 0.8,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0
+      },
+      "score": 0.9652564246464854,
+      "file": "configs/tuning/round_6.yaml"
     }
   ]
 }
