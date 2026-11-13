@@ -206,6 +206,16 @@ def test_load_cached_refuses_to_mix_old_networks(tmp_path, monkeypatch):
     assert [d["name"] for d in tune.load_cached(reg)] == ["moi"]
 
 
+def test_tune_cli_accepts_every_override():
+    """tune dùng chung load_params() với build_network: mọi khoá OVERRIDES phải có trong args."""
+    from pose_assoc.build_network import OVERRIDES, load_params
+    args = tune.parse_args(["--grid", "eta=0,0.1", "--force"])
+    assert set(OVERRIDES) <= set(vars(args))
+    assert load_params(args.config, args).eta == 0.0
+    assert load_params(args.config, tune.parse_args(["--eta", "0.2"])).eta == 0.2
+    assert tune.parse_grid(args.grid)["eta"] == [0.0, 0.1]
+
+
 def test_round_file_keeps_eta():
     p = CostParams(alpha=1.5, eta=0.75, disp_scale=0.1)
     assert CostParams.from_config(tune.association_block(p)) == p
