@@ -77,6 +77,21 @@ MPI_IDX = {"neck": 5, "left_shoulder": 9, "right_shoulder": 14, "left_elbow": 10
            "right_ankle": 25}
 COCO17 = ["nose", "left_eye", "right_eye", "left_ear", "right_ear"] + LIMBS
 
+# 12 khớp chung: thứ tự bắt buộc cho WHAM-2D và GT-2D.
+WHAM_2D_JOINTS = LIMBS
+OVERLAY_CSV_JOINTS_12 = LIMBS
+
+# annot2 và annot3 của MPI cùng dùng thứ tự 28 khớp.
+MPI_ANNOT2_TO_SHARED_12 = [
+    MPI_IDX[j] for j in LIMBS
+]
+# [9, 14, 10, 15, 11, 16, 18, 23, 19, 24, 20, 25]
+
+# Harmony4D poses2d: SMPL 45-joint layout.
+H4D_45_TO_SHARED_12 = [
+    WHAM_SMPL_IDX[j] for j in LIMBS
+]
+# [16, 17, 18, 19, 20, 21, 1, 2, 4, 5, 7, 8]
 
 def make_skeleton(joints, extra_bones=()):
     """Khung xương = tên khớp + cặp chỉ số xương."""
@@ -422,6 +437,73 @@ def load_wham_csv(seq: dict, smpl: Path) -> pd.DataFrame:
         temp_pkl.unlink(missing_ok=True)
         print("  Đã xóa PKL tạm trên máy (file gốc trên Drive không bị ảnh hưởng).")
         return df
+
+
+def wham_pkl_to_2d(pkl: Path, smpl: Path, image_size) -> pd.DataFrame:
+    """12 khớp SMPL của mọi detection WHAM chiếu lên ảnh: frame, body_id, <khớp>_u/_v (px).
+
+    Dùng đúng camera mà WHAM giả định: f = hypot(W, H), điểm chính ở tâm ảnh. `verts`
+    trong pkl nằm sẵn trong hệ camera đó (khác hệ world của RA-WHAM.csv), nên chiếu thẳng.
+    Cột frame lấy từ frame_ids, cùng quy ước với cột frame_id của RA-WHAM.csv.
+    """
+    W, H = (float(x) for x in image_size)
+    f = float(np.hypot(W, H))
+    J = load_j_regressor(smpl)
+    idx = [WHAM_SMPL_IDX[j] for j in LIMBS]
+    tables = []
+    for sid, d in joblib.load(pkl).items():
+        frames = np.asarray(d.get("frame_ids", []), int).reshape(-1)
+        if not len(frames):
+            continue
+        verts = np.asarray(d["verts"], np.float64)
+        if len(verts) != len(frames):
+            raise ValueError(f"body_id {sid}: {len(frames)} frame_ids nhưng {len(verts)} verts")
+        jc = np.einsum("jv,nvc->njc", J, verts)[:, idx]
+        z = jc[..., 2]
+        ok = np.isfinite(jc).all(-1) & (z > 1e-6)
+        z = np.where(ok, z, 1.0)
+        u = np.where(ok, f * jc[..., 0] / z + W / 2, np.nan)
+        v = np.where(ok, f * jc[..., 1] / z + H / 2, np.nan)
+        df = pd.DataFrame({"frame": frames, "body_id": int(sid)})
+        for i, name in enumerate(LIMBS):
+            df[f"{name}_u"], df[f"{name}_v"] = u[:, i], v[:, i]
+        tables.append(df)
+    if not tables:
+        raise ValueError(f"PKL không có detection nào: {pkl}")
+    return pd.concat(tables, ignore_index=True).sort_values(["frame", "body_id"],
+                                                            ignore_index=True)
+
+
+def load_wham_2d(seq: dict, smpl: Path) -> pd.DataFrame:
+    """Đọc out_dir/WHAM-2D.csv; chưa có thì tạo từ pkl (pkl Drive được tải lại một lần).
+
+    RA-WHAM.csv không có toạ độ ảnh, còn pkl tải từ Drive đã bị xoá sau khi chuyển
+    đổi, nên lần đầu mỗi sequence phải tải lại pkl. Cần khoá "image_size": [W, H]
+    trong manifest = kích thước video mà WHAM đã chạy.
+    """
+    out = seq["out_dir"] / "WHAM-2D.csv"
+    if out.is_file():
+        return pd.read_csv(out)
+    size = seq.get("image_size")
+    if not size or len(size) != 2:
+        raise ValueError(f"Sequence '{seq['name']}' thiếu \"image_size\": [W, H] trong manifest "
+                         "(kích thước video WHAM đã chạy), cần để chiếu WHAM lên ảnh.")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if not seq.get("wham_pkl_is_drive"):
+        df = wham_pkl_to_2d(seq["wham_pkl"], smpl, size)
+    else:
+        with tempfile.NamedTemporaryFile(prefix="wham_drive_", suffix=".pkl", delete=False) as f:
+            temp_pkl = Path(f.name)
+        try:
+            download_drive_file(seq["wham_pkl"], temp_pkl)
+            df = wham_pkl_to_2d(temp_pkl, smpl, size)
+        finally:                       # kể cả khi lỗi hay Ctrl+C: không để sót pkl / .part
+            temp_pkl.unlink(missing_ok=True)
+            for part in temp_pkl.parent.glob(temp_pkl.name + "*.part"):
+                part.unlink(missing_ok=True)
+    df.to_csv(out, index=False)
+    print(f"  Đã lưu {len(df)} dòng toạ độ ảnh -> {out.name}")
+    return df
 
 
 def wham_poses(df: pd.DataFrame) -> dict:
