@@ -51,8 +51,8 @@ import pandas as pd
 import yaml
 from scipy.ndimage import uniform_filter
 
-from .build_network import (REPO, is_skipped, load_inputs, load_params, load_positions,
-                            mapping_module)
+from .build_network import (OVERRIDES, REPO, is_skipped, load_inputs, load_params,
+                            load_positions, mapping_module)
 from .costs import CostParams
 from .evaluation import load_truth_by_person, require_truth_by_person
 from .network import apply_params, attach_positions, build_network
@@ -388,7 +388,7 @@ def parse_grid(items: list[str] | None) -> dict:
     return grid
 
 
-def parse_args():
+def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Hiệu chỉnh hệ số tích luỹ trên tập validation")
     p.add_argument("--manifest", type=Path, default=REPO / "configs" / "splits.json")
     p.add_argument("--config", type=Path, default=REPO / "configs" / "default.yaml",
@@ -400,10 +400,11 @@ def parse_args():
     p.add_argument("--include", nargs="+", help="dùng lại sequence đã loại")
     p.add_argument("--list", action="store_true", help="chỉ in sổ đăng ký")
     p.add_argument("--force", action="store_true", help="chỉnh lại kể cả không có dữ liệu mới")
-    for name in ("alpha", "gamma", "c_fp", "c_fn", "c_disappear", "c_reappear"):
+    # cùng danh sách với build_network: load_params() đọc mọi khoá của OVERRIDES
+    for name in OVERRIDES:
         p.add_argument(f"--{name.replace('_', '-')}", type=float, dest=name,
                        help=argparse.SUPPRESS)
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def run_round(mod, manifest: dict, reg: dict, args) -> None:
