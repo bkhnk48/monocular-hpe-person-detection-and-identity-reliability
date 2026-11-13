@@ -7,6 +7,7 @@ Mỗi lần chạy:
        - sequence mới             -> dựng mạng, lưu đại lượng thô vào cache, đăng ký
        - đã có (cùng khoá)        -> bỏ qua, dùng cache (không tính, không đếm 2 lần)
        - đã có nhưng nhãn đổi     -> tính lại với mapping_frames.csv mới
+       - cache dựng bằng phiên bản mạng cũ (NET_VERSION) -> dựng lại
        - trùng một sequence test  -> từ chối
        - đã bị loại (--exclude)   -> bỏ qua
        - "skip": true trong manifest -> không thêm, không cập nhật; nếu đã đăng ký
@@ -20,11 +21,16 @@ Mỗi lần chạy:
 
 C_FN được cố định (mặc định 1.0): nhân mọi chi phí với cùng một số thì nghiệm không đổi.
 
+Cache luôn có độ dịch 2D (C_V) của mọi cung, nên quét được eta mà không dựng lại mạng.
+Cache dựng trước NET_VERSION hiện tại không được trộn vào: sequence còn trong manifest
+thì tự dựng lại; sequence chỉ còn trong sổ thì phải --exclude (hoặc đưa lại vào manifest).
+
 Chạy từ thư mục gốc repo:
   python3 -m pose_assoc.tune                         # chạy một lần hiệu chỉnh
   python3 -m pose_assoc.tune --list                  # xem sổ đăng ký và các lần
   python3 -m pose_assoc.tune --exclude mpi_S8_Seq1_cam8
   python3 -m pose_assoc.tune --grid alpha=0.5,1,2 --grid gamma=0,0.5
+  python3 -m pose_assoc.tune --grid eta=0,0.25,0.5,1,2 --force
 """
 
 from __future__ import annotations
@@ -45,12 +51,15 @@ import pandas as pd
 import yaml
 from scipy.ndimage import uniform_filter
 
-from .build_network import REPO, is_skipped, load_inputs, load_params, mapping_module
+from .build_network import (REPO, is_skipped, load_inputs, load_params, load_positions,
+                            mapping_module)
 from .costs import CostParams
 from .evaluation import load_truth_by_person, require_truth_by_person
-from .network import apply_params, build_network
+from .network import apply_params, attach_positions, build_network
 from .solvers.multi_mcf import solve_network
 
+# Tăng khi đại lượng thô lưu trong cache đổi. 2 = có arc_disp (độ dịch 2D, C_V).
+NET_VERSION = 2
 TUNING_DIR = REPO / "configs" / "tuning"
 REGISTRY = TUNING_DIR / "registry.json"
 CACHE_DIR = REPO / "outputs" / "tuning" / "cache"
@@ -151,8 +160,11 @@ def node_status(net, truth: dict) -> np.ndarray:
 def prepare_sequence(mod, manifest: dict, seq: dict, base: CostParams) -> dict:
     dets, gt = load_inputs(mod, manifest, seq)
     net = build_network(dets, gt, base)
+    # luôn gắn độ dịch 2D (kể cả khi eta = 0) để các lần sau quét eta không phải dựng lại
+    apply_params(attach_positions(net, load_positions(mod, manifest, seq)), base)
     truth = load_truth_by_person(seq["out_dir"] / "mapping_frames.csv")
-    data = {"name": seq["name"], "net": net, "status": node_status(net, truth)}
+    data = {"name": seq["name"], "net": net, "status": node_status(net, truth),
+            "net_version": NET_VERSION}
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with open(cache_path(seq_key(seq)), "wb") as f:
         pickle.dump(data, f)
@@ -170,6 +182,8 @@ def classify(seq: dict, key: str, reg: dict, test_keys: set) -> str:
         return "new" if mapping_signature(seq) else "unlabeled"
     if e.get("excluded"):
         return "excluded"
+    if e.get("net_version") != NET_VERSION:
+        return "outdated"
     sig = mapping_signature(seq)
     old_gt = e.get("gt_signature")
     if old_gt is not None and old_gt != gt_signature(seq):
@@ -181,6 +195,7 @@ def classify(seq: dict, key: str, reg: dict, test_keys: set) -> str:
 MESSAGES = {"new": "mới            -> dựng mạng",
             "changed": "NHÃN ĐÃ ĐỔI    -> dựng lại với nhãn mới",
             "gt_changed": "GT ĐÃ ĐỔI        -> dựng lại với GT mới",
+            "outdated": "MẠNG PHIÊN BẢN CŨ -> dựng lại (thêm độ dịch 2D)",
             "known": "ĐÃ CÓ (lần {r}) -> bỏ qua, dùng dữ liệu đã lưu",
             "excluded": "ĐÃ BỊ LOẠI     -> bỏ qua",
             "unlabeled": "chưa có mapping_frames.csv -> bỏ qua (gán nhãn trước)",
@@ -210,11 +225,12 @@ def register_validation(mod, manifest: dict, reg: dict, base: CostParams, rnd: i
         state = classify(seq, key, reg, test_keys)
         old = reg["sequences"].get(key, {})
         print(f"  {seq['name']:<28} " + state_message(state, seq, old))
-        if state in ("new", "changed", "gt_changed"):
+        if state in ("new", "changed", "gt_changed", "outdated"):
             prepare_sequence(mod, manifest, seq, base)
             reg["sequences"][key] = {
                 "name": seq["name"], "gt": str(seq["gt"]["path"]),
                 "mapping_sig": mapping_signature(seq), "gt_signature": gt_signature(seq), "excluded": False,
+                "net_version": NET_VERSION,
                 "added_round": old.get("added_round", rnd), "updated_round": rnd}
             changed += 1
     return changed
@@ -229,11 +245,27 @@ def warn_test_leak(manifest: dict, reg: dict):
 
 
 def load_cached(reg: dict) -> list[dict]:
-    data = []
+    """Cache của mọi sequence chưa bị loại; dừng hẳn nếu có cache phiên bản mạng cũ.
+
+    Trộn mạng cũ (không có arc_disp) với mạng mới thì eta chỉ tác động lên một phần
+    dữ liệu mà không báo gì, nên không cho chạy tiếp.
+    """
+    data, stale = [], []
     for key, e in reg["sequences"].items():
-        if not e.get("excluded"):
-            with open(cache_path(key), "rb") as f:
-                data.append(pickle.load(f))
+        if e.get("excluded"):
+            continue
+        with open(cache_path(key), "rb") as f:
+            d = pickle.load(f)
+        (data if d.get("net_version") == NET_VERSION else stale).append(d)
+    if stale:
+        names = [d["name"] for d in stale]
+        raise SystemExit(
+            f"\n  {len(names)} sequence trong sổ đăng ký có cache dựng bằng mạng phiên bản cũ "
+            f"(chưa có độ dịch 2D), không trộn với mạng phiên bản {NET_VERSION}:\n"
+            + "".join(f"    - {n}\n" for n in names)
+            + "  Đưa chúng lại vào tập validation của manifest (kèm image_size) để dựng lại, "
+            "hoặc loại khỏi sổ:\n"
+            f"    python3 -m pose_assoc.tune --exclude {' '.join(names)}")
     return data
 
 # ============================================================
@@ -296,10 +328,11 @@ def pick_stable(df: pd.DataFrame, grid: dict) -> pd.Series:
 
 
 def association_block(p: CostParams) -> dict:
-    return {"weights": {"pose": p.alpha, "temporal": p.gamma},
+    return {"weights": {"pose": p.alpha, "temporal": p.gamma, "displacement": p.eta},
             "costs": {"false_positive": p.c_fp, "false_negative": p.c_fn,
                       "disappear": p.c_disappear, "reappear": p.c_reappear},
-            "scales": {"pose_mm": p.pose_scale_mm, "motion_m": p.motion_scale_m},
+            "scales": {"pose_mm": p.pose_scale_mm, "motion_m": p.motion_scale_m,
+                       "displacement": p.disp_scale},
             "boundary": {"start_detected": p.start_detected, "start_missed": p.start_missed,
                          "end_detected": p.end_detected, "end_missed": p.end_missed}}
 
@@ -320,8 +353,10 @@ def write_round(rnd: int, p: CostParams, best: pd.Series, data: list[dict], df, 
 def print_comparison(prev: dict | None, p: CostParams, best: pd.Series,
                      prev_now: dict | None, n_seq: int):
     print(f"\n  {'':<16}{'lần trước':>12}{'lần này':>12}")
-    for name in ("alpha", "gamma", "c_fp", "c_disappear", "c_reappear"):
-        old = f"{prev['params'][name]:.3g}" if prev else "-"
+    default = CostParams()
+    for name in ("alpha", "gamma", "eta", "c_fp", "c_disappear", "c_reappear"):
+        # các lần chỉnh trước khi có eta không lưu trường này -> giá trị mặc định (0)
+        old = f"{prev['params'].get(name, getattr(default, name)):.3g}" if prev else "-"
         print(f"  {name:<16}{old:>12}{getattr(p, name):>12.3g}")
     old = f"{prev_now['score']:.2%}" if prev_now else "-"
     print(f"  {'điểm':<16}{old:>12}{best['score']:>12.2%}   (trên {n_seq} sequence hiện có)")
