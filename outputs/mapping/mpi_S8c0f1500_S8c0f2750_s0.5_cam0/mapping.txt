@@ -1,0 +1,20 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: mpi_S8c0f1500_S8c0f2750_s0.5_cam0
+# wham_pkl: 14XX7J8YbPLkFKRYRQebH3oYtCw6mMudA
+# gt: 1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+0 = Y_S8
+1 = X_S8
+# 4 = (không phải người GT)
+8 = Y_S8
+10 = Y_S8
+11 = X_S8
+22 = X_S8 @ 1069-1104, 1145-1177
+22 = Y_S8 @ 1105-1144
+29 = X_S8
+41 = X_S8 @ 1278-1328
+41 = Y_S8 @ 1329-1348
+48 = Y_S8
+50 = X_S8
