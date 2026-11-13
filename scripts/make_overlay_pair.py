@@ -898,6 +898,8 @@ def main():
     if args.suggest:
         n_suggest = min(args.frames or 1500, X["end"] - X["start"], Y["end"] - Y["start"])
         suggest(X, Y, n_suggest, args)
+
+        print("\nBỏ --suggest để ra được video overlay.")
         return
 
     n = min(X["end"] - X["start"], Y["end"] - Y["start"])
