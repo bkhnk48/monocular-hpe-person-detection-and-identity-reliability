@@ -423,10 +423,10 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 | `pose_assoc/solvers/multi_mcf.py` | Kiểm tra xung đột detection, giải MILP khi cần, ghi trạng thái HiGHS |
 | `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay. Hai định dạng nhãn, không dùng lẫn: `load_truth_by_person()` cho `evaluate()` (build_network) và tune; `load_truth()` cho `evaluate_assignment()` (`pose_assoc/compare.py`). `evaluate()` từ chối nhãn sai định dạng (`tests/test_evaluation_truth.py`) |
 | `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest; `--split` bỏ qua sequence `"skip": true` (`select_sequences()`) |
-| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation; không thêm hay cập nhật sequence `"skip": true` |
+| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation; không thêm hay cập nhật sequence `"skip": true`, thêm bước kiểm tra GT đã đổi. |
 | `pose_assoc/baselines.py` | Các baseline trên cùng mạng: B6 giữ ID gốc của WHAM (đa số phiếu), B1 tham lam theo frame, B2 Hungarian theo frame, B3 đường đi ngắn nhất độc lập (không ràng buộc dùng chung detection) |
 | `pose_assoc/compare.py` | CLI: so sánh B6/B1/B2/B3 với B4 (MC-MCF) trên các sequence đã gán nhãn của một tập, ghi `outputs/compare/<split>/table.csv` kèm macro-average |
-| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay` |
+| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay`, `mpi_overlay_csv` và GT bằng fileID |
 | `scripts/make_overlay_pair.py` | CLI: ghép 2 đoạn video MPI 1 người (`--x`/`--y START:END`, `--x-video`) thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D); `--mode generate`/`render` để sửa tay từng frame PNG rồi ghép lại MP4 |
 | `scripts/overlay_autolabel.py` | CLI: gán nhãn tự động cho video ghép theo vị trí 2D (không dùng PA-MPJPE); mẫu kiểm chứng tay theo mức che |
 | `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi; video MPI đơn (`--annot`, `--camera`) hoặc video ghép (`--meta`, GT từ `gt_3d_scene.csv`) |
