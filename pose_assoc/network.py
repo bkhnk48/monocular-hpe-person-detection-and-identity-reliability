@@ -10,7 +10,8 @@ Cung nối mọi nút của lớp này với mọi nút của lớp kế tiếp 
 Ràng buộc nối các luồng: mỗi detection (t, d) chỉ thuộc tối đa 1 người.
 Số luồng K = số người trong GT.
 
-Mạng lưu ĐẠI LƯỢNG THÔ (PA-MPJPE của nút, rms chuyển động của cung, loại cung).
+Mạng lưu ĐẠI LƯỢNG THÔ (PA-MPJPE của nút, rms chuyển động của cung, loại cung,
+và độ dịch 2D của cung nếu đã gọi attach_positions()).
 Chi phí là hàm tuyến tính của các hệ số, nên đổi hệ số chỉ cần gọi apply_params()
 mà không phải dựng lại mạng (dùng cho pose_assoc.tune).
 """
@@ -22,7 +23,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .costs import CostParams, detection_cost, motion_cost, motion_rms, procrustes
+from .costs import (CostParams, detection_cost, displacement_2d, displacement_cost,
+                    motion_cost, motion_rms, procrustes)
 
 # Loại cung chi tiết (arc_sub) -> loại chung (arc_kind)
 SUB_TO_KIND = {"dd": "move", "dm": "move", "md": "move", "mm": "move",
@@ -39,6 +41,8 @@ class Network:
     arc_sub: list[str] = field(default_factory=list)
     arc_rms: list[float] = field(default_factory=list)   # chỉ có nghĩa với cung "dd"
     arc_gap: list[int] = field(default_factory=list)     # dt (frame gốc) của cung move
+    # độ dịch 2D (C_V), chỉ khác 0 ở cung "dd"; rỗng = chưa gọi attach_positions()
+    arc_disp: list[float] = field(default_factory=list)
     arc_cost: np.ndarray = None
     node_costs: np.ndarray = None
     n_detections: int = 0
@@ -83,7 +87,36 @@ def apply_params(net: Network, p: CostParams) -> Network:
     # mạng cũ trong cache tuning chưa có arc_gap -> coi mọi dt = 1
     gap = np.asarray(net.__dict__.get("arc_gap") or np.ones(len(sub)), float)
     net.arc_cost[dd] = motion_cost(np.asarray(net.arc_rms)[dd], p, gap[dd])
+    # C_V: chỉ có khi đã gắn attach_positions(); mạng chưa gắn (kể cả lúc build_network
+    # tự gọi apply_params ở cuối) thì bỏ qua. Cache cũ đã bị tune.load_cached() chặn.
+    disp = np.asarray(arc_disp(net), float)
+    if p.eta and len(disp):
+        if len(disp) != len(sub):
+            raise ValueError(f"arc_disp có {len(disp)} phần tử nhưng mạng có {len(sub)} cung")
+        net.arc_cost[dd] += displacement_cost(disp[dd], p, gap[dd])
     net.constant = p.c_fp * net.n_detections
+    return net
+
+
+def arc_disp(net: Network) -> list:
+    """Độ dịch 2D của các cung; [] nếu chưa gắn (mạng cũ trong cache không có trường này)."""
+    disp = net.__dict__.get("arc_disp")
+    return [] if disp is None else disp
+
+
+def attach_positions(net: Network, det_uv: dict) -> Network:
+    """Gắn độ dịch 2D thô cho mọi cung (0 nếu không phải cung "dd").
+
+    det_uv: {(frame, body_id): (12, 2) px}, cùng thứ tự khớp LIMBS. Chỉ lưu con số
+    vào net.arc_disp, không lưu toạ độ vào nút, để cache của tune nhẹ.
+    Gọi apply_params() lại sau đó thì C_V mới vào chi phí.
+    """
+    def uv(i):
+        n = net.nodes[i]
+        return det_uv.get((n["frame"], n["body_id"]))
+
+    net.arc_disp = [displacement_2d(uv(a), uv(b)) if s == "dd" else 0.0
+                    for a, b, s in zip(net.tails, net.heads, net.arc_sub)]
     return net
 
 
@@ -156,6 +189,8 @@ def arcs_frame(net: Network, flow: np.ndarray | None = None) -> pd.DataFrame:
                        "gap": net.__dict__.get("arc_gap") or 1,
                        "arc_cost": net.arc_cost, "weight": net.arc_weight()})
     df["person"] = [net.nodes[t]["person"] for t in net.tails]
+    if len(arc_disp(net)) == len(df):
+        df["disp_2d"] = arc_disp(net)
     df.insert(0, "id", range(len(df)))
     if flow is not None:
         df["flow"] = flow.astype(int)
