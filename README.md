@@ -181,13 +181,33 @@ Khi mọi frame GT liền nhau (`Δt = 1`), công thức trùng với công th�
 
 Vì vậy, trong framework này, thuật ngữ *temporal residual consistency* được sử dụng thay cho *physical motion smoothness*.
 
+**Độ dịch 2D giữa hai detection (`C_V`, tuỳ chọn)**
+
+`C_temporal` không mang thông tin danh tính, vì Procrustes đã bỏ vị trí. `C_V` bổ sung chính thông tin đó: vị trí trên ảnh của hai detection liên tiếp trên đường đi của cùng một người GT. Cùng một người thì dịch ít; nhảy sang người khác thì dịch cỡ khoảng cách giữa hai người. `C_V` không dùng GT.
+
+Mỗi detection được chiếu lên ảnh bằng đúng camera mà WHAM giả định (`f = sqrt(W² + H²)`, điểm chính ở tâm ảnh), lấy 12 khớp SMPL ứng với `LIMBS`: `u_a,j` (px). Cỡ người `S(u)` là cạnh dài hơn của khung bao các khớp, tối thiểu 40 px.
+
+```text
+D(a, b) = sqrt((1 / J) × sum_j ||u_b,j - u_a,j||_2^2) / ((S(u_a) + S(u_b)) / 2)
+
+C_V(a, b) = η × D(a, b) / (s_V × (Δt_ab)^p)
+```
+
+Trong đó:
+
+- `η`: trọng số độ dịch 2D, mặc định 0 (tắt; kết quả trùng hoàn toàn với khi chưa có `C_V`).
+- `s_V`: hệ số chuẩn hóa, mặc định 0.05 cỡ người.
+- `Δt_ab`, `p`: như của `C_temporal`.
+
+Chỉ các khớp hợp lệ ở cả hai detection được dùng; ít hơn 8 khớp thì `D = 0`. Toạ độ ảnh được lưu ở `outputs/mapping/<sequence>/WHAM-2D.csv` (cột `frame`, `body_id`, `<khớp>_u`, `<khớp>_v`). Lần đầu tạo cần pkl của WHAM (pkl trên Drive được tải lại một lần) và khoá `"image_size": [W, H]` của sequence trong `configs/splits.json`.
+
 ### 4.3. Chi phí chuyển trạng thái
 
 Các trạng thái trên đường đi có các chi phí chuyển tiếp:
 
 | Chuyển trạng thái | Chi phí |
 |---|---:|
-| Detected → Detected | `C_temporal` |
+| Detected → Detected | `C_temporal + C_V` |
 | Detected → Missed | `C_disappear` |
 | Missed → Detected | `C_reappear` |
 | Missed → Missed | 0 |
@@ -225,7 +245,7 @@ Có thể biểu diễn hàm mục tiêu dưới dạng:
 min L =
     sum_t,k,d x_tkd × (α × PA_tkd / s_P - C_FP)
   + sum_t,k m_tk × C_FN
-  + sum_(a,b) in E_dd C_temporal(a,b)
+  + sum_(a,b) in E_dd (C_temporal(a,b) + C_V(a,b))
   + N_dm × C_disappear
   + N_md × C_reappear
   + C_boundary
@@ -366,7 +386,9 @@ Nếu MILP dừng vì hết thời gian nhưng vẫn có nghiệm khả thi, ngh
 | `C_reappear` | 0.20 | Phạt Missed → Detected | `costs.reappear` |
 | `s_P` | 100 mm | Pose normalization scale | `scales.pose_mm` |
 | `s_M` | 0.05 m | Temporal normalization scale | `scales.motion_m` |
-| `p` | 1.0 | Số mũ của `Δt` trong temporal cost | `temporal.gap_power` |
+| `p` | 1.0 | Số mũ của `Δt` trong temporal cost (và `C_V`) | `temporal.gap_power` |
+| `η` | 0.0 | Trọng số độ dịch 2D `C_V` (0 = tắt) | `weights.displacement` |
+| `s_V` | 0.05 | Displacement normalization scale (theo cỡ người trên ảnh) | `scales.displacement` |
 | `C_start_det` | 0.0 | Chi phí đầu chuỗi, detected | `boundary.start_detected` |
 | `C_start_miss` | 0.0 | Chi phí đầu chuỗi, missed | `boundary.start_missed` |
 | `C_end_det` | 0.0 | Chi phí cuối chuỗi, detected | `boundary.end_detected` |
@@ -417,16 +439,16 @@ Residual sau alignment được lưu lại để tính temporal residual consist
 
 | Module | Chức năng |
 |---|---|
-| `pose_assoc/costs.py` | Tham số chi phí `CostParams`, Procrustes alignment, PA-MPJPE, temporal residual cost |
-| `pose_assoc/network.py` | Xây dựng mạng time-expanded, các nút, cung và trọng số; `apply_params()` |
+| `pose_assoc/costs.py` | Tham số chi phí `CostParams`, Procrustes alignment, PA-MPJPE, temporal residual cost, độ dịch 2D `C_V` (`displacement_2d()`, `displacement_cost()`) |
+| `pose_assoc/network.py` | Xây dựng mạng time-expanded, các nút, cung và trọng số; `apply_params()`; `attach_positions()` gắn độ dịch 2D thô (`arc_disp`) cho các cung |
 | `pose_assoc/solvers/single_mcf.py` | Giải đường đi ngắn nhất độc lập bằng dynamic programming |
 | `pose_assoc/solvers/multi_mcf.py` | Kiểm tra xung đột detection, giải MILP khi cần, ghi trạng thái HiGHS |
 | `pose_assoc/evaluation.py` | Bảng gán, phân rã hàm mục tiêu, chấm điểm so với mapping gán tay. Hai định dạng nhãn, không dùng lẫn: `load_truth_by_person()` cho `evaluate()` (build_network) và tune; `load_truth()` cho `evaluate_assignment()` (`pose_assoc/compare.py`). `evaluate()` từ chối nhãn sai định dạng (`tests/test_evaluation_truth.py`) |
-| `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest; `--split` bỏ qua sequence `"skip": true` (`select_sequences()`) |
-| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation; không thêm hay cập nhật sequence `"skip": true`, thêm bước kiểm tra GT đã đổi. |
+| `pose_assoc/build_network.py` | CLI: dựng mạng, giải và xuất kết quả cho các sequence trong manifest; `--split` bỏ qua sequence `"skip": true` (`select_sequences()`); `load_positions()` đọc toạ độ ảnh WHAM khi `η > 0` |
+| `pose_assoc/tune.py` | CLI: hiệu chỉnh tham số tích lũy qua nhiều lần trên tập validation; không thêm hay cập nhật sequence `"skip": true`, thêm bước kiểm tra GT đã đổi. Cache luôn có độ dịch 2D; cache dựng trước `NET_VERSION` hiện tại không được trộn vào (`load_cached()` dừng và chỉ cách `--exclude`). |
 | `pose_assoc/baselines.py` | Các baseline trên cùng mạng: B6 giữ ID gốc của WHAM (đa số phiếu), B1 tham lam theo frame, B2 Hungarian theo frame, B3 đường đi ngắn nhất độc lập (không ràng buộc dùng chung detection) |
 | `pose_assoc/compare.py` | CLI: so sánh B6/B1/B2/B3 với B4 (MC-MCF) trên các sequence đã gán nhãn của một tập, ghi `outputs/compare/<split>/table.csv` kèm macro-average |
-| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay`, `mpi_overlay_csv` và GT bằng fileID |
+| `scripts/wham_gt_mapping.py` | CLI: gán nhãn tay body_id WHAM ↔ người GT (cả theo đoạn frame); đọc GT `mpi`, `harmony4d`, `mpi_overlay`, `mpi_overlay_csv` và GT bằng fileID; `load_wham_2d()` chiếu WHAM lên ảnh (`WHAM-2D.csv`) cho `C_V` |
 | `scripts/make_overlay_pair.py` | CLI: ghép 2 đoạn video MPI 1 người (`--x`/`--y START:END`, `--x-video`) thành video 2 người: X cỡ gốc đứng trước, Y thu nhỏ quanh tâm ảnh đứng sau (mặt nạ chroma key ∩ khung xương 2D); `--mode generate`/`render` để sửa tay từng frame PNG rồi ghép lại MP4 |
 | `scripts/overlay_autolabel.py` | CLI: gán nhãn tự động cho video ghép theo vị trí 2D (không dùng PA-MPJPE); mẫu kiểm chứng tay theo mức che |
 | `scripts/check_wham_camera.py` | CLI: so hệ toạ độ camera của WHAM (focal heuristic) với GT camera thật, trước và sau khi quy đổi; video MPI đơn (`--annot`, `--camera`) hoặc video ghép (`--meta`, GT từ `gt_3d_scene.csv`) |
@@ -469,7 +491,13 @@ python3 -m pose_assoc.build_network --split validation
 
 Sequence có `"skip": true` trong `configs/splits.json` bị bỏ qua khi gán nhãn, khi chạy theo `--split` và khi hiệu chỉnh. Gọi đích danh bằng `--seq` thì `build_network` vẫn chạy và in lưu ý. Với `pose_assoc.tune`, `skip` chỉ ngăn thêm hoặc cập nhật sequence. Sequence đã đăng ký từ lần trước thì dữ liệu đã lưu vẫn được dùng; muốn bỏ hẳn thì dùng `--exclude <tên>`.
 
-Kết quả nằm ở `outputs/network/<sequence>/` (`nodes.csv`, `arcs.csv`, `assignment.csv`, `summary.json`). Có thể ghi đè tham số bằng `--alpha`, `--gamma`, `--c-fp`, `--c-fn`, `--c-disappear`, `--c-reappear`, hoặc dùng `--config` với một file YAML.
+Kết quả nằm ở `outputs/network/<sequence>/` (`nodes.csv`, `arcs.csv`, `assignment.csv`, `summary.json`). Có thể ghi đè tham số bằng `--alpha`, `--gamma`, `--eta`, `--c-fp`, `--c-fn`, `--c-disappear`, `--c-reappear`, hoặc dùng `--config` với một file YAML.
+
+Bật độ dịch 2D `C_V` (mục 4.2). Lần đầu mỗi sequence sẽ tạo `WHAM-2D.csv` từ pkl, nên cần `"image_size"` trong manifest; `arcs.csv` có thêm cột `disp_2d` và phân rã hàm mục tiêu có thêm mục `displacement`:
+
+```bash
+python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --eta 0.5
+```
 
 Hiệu chỉnh tham số trên các sequence validation đã gán nhãn:
 
@@ -478,6 +506,12 @@ python3 -m pose_assoc.tune
 ```
 
 Bộ tham số của mỗi lần hiệu chỉnh được ghi ở `configs/tuning/round_<n>.yaml` và có thể dùng lại qua `--config`.
+
+Quét thêm `η` bằng `--grid eta=...`. Cache của tune luôn có độ dịch 2D. Sequence đăng ký trước khi có `C_V` được dựng lại nếu còn trong manifest; nếu chỉ còn trong sổ đăng ký thì tune dừng và in lệnh `--exclude` cho các sequence đó:
+
+```bash
+python3 -m pose_assoc.tune --grid eta=0,0.25,0.5,1,2 --grid gamma=0 --force
+```
 
 So sánh MC-MCF (B4) với các baseline trên cùng mạng và cùng nhãn tay. Chỉ chạy trên tập test sau khi đã chốt bộ tham số trên validation:
 
@@ -595,7 +629,9 @@ Với video MPI đơn thì thay `--meta` bằng `--annot data/raw/mpi_inf_3dhp/S
 
 6. **Chi phí false positive được tính trên toàn bộ detection đầu vào.** Các detection không được sử dụng đều góp vào `N_FP`, kể cả khi chúng không trở thành một nút ứng viên hợp lệ cho bất kỳ người GT nào.
 
-7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần `C_root` (vị trí pelvis 3D) và `C_2D` (sai số tái chiếu dùng calib camera) chưa được cài đặt.
+7. **Chưa dùng vị trí gốc 3D và tái chiếu 2D trong chi phí đơn.** Chi phí đơn chỉ dùng PA-MPJPE, vốn đã loại bỏ vị trí gốc. Hai thành phần `C_root` (vị trí pelvis 3D) và `C_2D` (sai số tái chiếu so với GT 2D) chưa được cài đặt. Vị trí trên ảnh hiện chỉ vào mô hình qua `C_V` (độ dịch giữa hai detection liên tiếp, không dùng GT, mục 4.2).
+
+9. **`C_V` không phạt bước nhảy đi qua trạng thái missed.** `C_V` chỉ nằm trên cung Detected → Detected. Một đường đi có thể đổi sang detection của người khác bằng cách đi qua một nút missed, khi đó chỉ trả `C_disappear + C_FN + C_reappear` (và mất phần lợi của detection), không trả `C_V`. Giống `C_temporal`, `C_V` bằng 0 khi một trong hai detection có ít hơn 8 khớp hợp lệ trên ảnh.
 
 8. **Video ghép chỉ hợp với chi phí bất biến vị trí và tỉ lệ.** Thu nhỏ người Y trong ảnh không đổi PA-MPJPE, và GT 2D được thu nhỏ theo cùng phép biến đổi. Vị trí gốc 3D của Y trong video ghép không còn là `annot3` gốc mà xấp xỉ `(X, Y, Z / s)`, cộng thêm độ lệch đã biết khi tâm thu nhỏ khác điểm chính. Ngoài ra `verts`/`trans` của WHAM nằm trong camera heuristic (`f = sqrt(W² + H²)`), không phải camera thật, nên phải quy đổi trước khi so với GT: giữ nguyên pixel, nhân độ sâu với `f_thật / f_heuristic` (`scripts/check_wham_camera.py`). Trên S8 cam0 (6259 detection đúng, GT sâu khoảng 3.5 m), so thẳng thì vị trí giữa hai hông lệch trung vị 345 cm (độ sâu gấp đôi); sau khi quy đổi thì lệch 13 cm (độ sâu +6 cm, p95 31 cm). Vì vậy muốn đánh giá `C_root` hay `C_2D` trên video ghép thì phải biến đổi GT của Y tương ứng, không dùng thẳng `annot3`. Đây là benchmark tổng hợp có kiểm soát, đặt bên cạnh dữ liệu đa người thật (Harmony4D), không thay thế.
 
@@ -604,6 +640,7 @@ Với video MPI đơn thì thay `--meta` bằng `--annot data/raw/mpi_inf_3dhp/S
 Các hướng mở rộng có thể được nghiên cứu và đánh giá thêm:
 
 - Bổ sung chi phí vị trí gốc 3D và tái chiếu 2D vào chi phí đơn.
+- Phạt độ dịch 2D giữa hai detection ở hai đầu một đoạn missed (xem giới hạn 9).
 - Chuẩn hóa `C_disappear`, `C_reappear` theo `Δt`, hoặc ngắt chuỗi khi `Δt` vượt ngưỡng.
 - Bổ sung các đặc trưng hình học và động học độc lập với GT.
 - Đánh giá độ nhạy của nghiệm đối với các tham số pose, temporal, FP và FN.
