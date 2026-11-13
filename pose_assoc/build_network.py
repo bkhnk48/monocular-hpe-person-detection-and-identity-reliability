@@ -6,6 +6,8 @@ Dựng mạng time-expanded, giải min-cost flow (1 hay nhiều luồng) và ch
   - Ground Truth : annot.mat (MPI, theo camera/person trong manifest) hoặc poses3d/*.npy
   - hệ số        : configs/default.yaml, mục association (ghi đè bằng --alpha, --gamma, ...)
   - đáp án       : outputs/mapping/<seq>/mapping_frames.csv (nếu có thì chấm điểm)
+  - toạ độ ảnh   : outputs/mapping/<seq>/WHAM-2D.csv, chỉ khi eta > 0 (C_V; tự tạo từ pkl,
+                   cần "image_size" trong manifest)
 
 Đầu ra (outputs/network/<seq>/):
   nodes.csv, arcs.csv   toàn bộ mạng (arcs.csv có cột flow = nghiệm)
@@ -16,6 +18,7 @@ Chạy từ thư mục gốc repo:
   python3 -m pose_assoc.build_network --seq mpi_S8_Seq1_cam0
   python3 -m pose_assoc.build_network --split validation
   python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --alpha 1.5 --gamma 0.3
+  python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --eta 0.5
 
 --split bỏ qua sequence có "skip": true trong manifest; --seq gọi đích danh thì vẫn chạy.
 """
@@ -34,7 +37,7 @@ import yaml
 
 from .costs import LIMBS, CostParams
 from .evaluation import assignment_table, evaluate, load_truth_by_person, objective_breakdown
-from .network import arcs_frame, build_network, nodes_frame
+from .network import apply_params, arcs_frame, attach_positions, build_network, nodes_frame
 from .solvers.multi_mcf import solve_network
 
 REPO = Path(__file__).resolve().parent.parent
@@ -44,7 +47,7 @@ GT_LIMB_SLICE = {
     "mpi_overlay_csv": slice(2, 14),
 }
 OVERRIDES = {"alpha": "alpha", "gamma": "gamma", "c_fp": "c_fp", "c_fn": "c_fn",
-             "c_disappear": "c_disappear", "c_reappear": "c_reappear"}
+             "c_disappear": "c_disappear", "c_reappear": "c_reappear", "eta": "eta"}
 
 
 def mapping_module():
@@ -110,6 +113,19 @@ def load_inputs(mod, manifest: dict, seq: dict):
     )
 
 
+def positions_from_2d(df: pd.DataFrame) -> dict:
+    """WHAM-2D.csv -> {(frame, body_id): (12, 2) px}, cùng thứ tự khớp LIMBS."""
+    cols = [f"{j}_{a}" for j in LIMBS for a in "uv"]
+    pts = df[cols].to_numpy(float).reshape(len(df), len(LIMBS), 2)
+    return {(int(f), int(b)): p for f, b, p in zip(df["frame"], df["body_id"], pts)}
+
+
+def load_positions(mod, manifest: dict, seq: dict) -> dict:
+    """Toạ độ ảnh của mọi detection WHAM cho C_V (không cần GT)."""
+    print("  Đọc toạ độ ảnh WHAM (WHAM-2D.csv) ...")
+    return positions_from_2d(mod.load_wham_2d(seq, manifest["smpl_model"]))
+
+
 def export(out: Path, net, flow, assign: pd.DataFrame, summary: dict, full: bool):
     out.mkdir(parents=True, exist_ok=True)
     if full:
@@ -133,7 +149,8 @@ def print_summary(s: dict):
               f"{ms['mip_node_count']} nút nhánh cận")
     o = s["objective"]
     print(f"    pose {o['pose']:.3f} | FP {o['false_positive']:.3f} | FN {o['false_negative']:.3f}"
-          f" | thời gian {o['temporal_and_gaps']:.3f} | biên {o['boundary']:.3f}")
+          f" | thời gian {o['temporal_and_gaps']:.3f} | dịch 2D {o['displacement']:.3f}"
+          f" | biên {o['boundary']:.3f}")
     m = s.get("metrics")
     if m:
         print(f"  So với mapping gán tay: đúng {m['accuracy']:.2%} "
@@ -148,6 +165,8 @@ def run_sequence(mod, manifest: dict, seq: dict, args):
     dets, gt = load_inputs(mod, manifest, seq)
     params = load_params(args.config, args)
     net = build_network(dets, gt, params)
+    if params.eta:          # C_V cần toạ độ ảnh; eta = 0 thì không đọc, kết quả như cũ
+        apply_params(attach_positions(net, load_positions(mod, manifest, seq)), params)
     flow, info = solve_network(net, args.time_limit)
     assign = assignment_table(net, flow)
     summary = {"sequence": seq["name"], "params": asdict(params), "solver": info,
