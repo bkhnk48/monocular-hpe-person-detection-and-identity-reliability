@@ -101,6 +101,54 @@ def test_mask_keeps_person_and_drops_green_background():
     assert inside > 0.6 and outside < 0.01
 
 
+def _greenish_person(top=90, bottom=510, left=440, right=560):
+    """Phông xanh đậm + bóng phông tối; người mặc áo xám ngả xanh như S4 (G - max(R,B) = 25)."""
+    img = np.zeros((600, 1000, 3), np.uint8)
+    img[:] = (40, 140, 40)
+    img[:, :200] = (15, 45, 20)                  # phông trong bóng tối: vẫn xanh đậm màu
+    img[top:bottom, left:right] = (125, 150, 120)
+    person = np.zeros(img.shape[:2], bool)
+    person[top:bottom, left:right] = True
+    return img, person
+
+
+def test_mask_keeps_greenish_grey_clothes():
+    img, person = _greenish_person()
+    j = standing_skeleton(500)
+
+    def kept(chroma):
+        _, fg, (x0, y0, x1, y1) = mk.person_alpha(img, j, 12, 0.16, chroma=chroma)
+        full = np.zeros(img.shape[:2], bool)
+        full[y0:y1, x0:x1] = fg
+        return full[person].mean(), full[~person].mean()
+
+    old_in, _ = kept(0.0)                        # chỉ dùng tau: áo bị coi là phông
+    new_in, new_out = kept(mk.MIN_CHROMA)
+    assert old_in < 0.1
+    assert new_in > 0.6 and new_out < 0.01
+
+
+def test_dark_green_screen_is_still_background():
+    img, _ = _greenish_person()
+    j = standing_skeleton(100)                   # khung xương nằm trong vùng phông tối
+    r = mk.person_alpha(img, j, 12, 0.16, chroma=mk.MIN_CHROMA)
+    assert r is None or r[1].mean() < 0.01
+
+
+def test_mask_fill_flags_eaten_clothes(capsys):
+    img, _ = _greenish_person()
+    j = standing_skeleton(500)
+    fills = {}
+    for chroma in (0.0, mk.MIN_CHROMA):
+        _, fg, box = mk.person_alpha(img, j, 12, 0.16, chroma=chroma)
+        fills[chroma] = mk.mask_fill(fg, j, box, 0.16)
+    assert fills[0.0] < mk.FILL_WARN < fills[mk.MIN_CHROMA]
+    mk.summarize(pd.DataFrame({"vis_y": [1.0, 1.0], "y_cut": [False, False],
+                               "fill_x": [fills[0.0]] * 2, "fill_y": [fills[mk.MIN_CHROMA]] * 2}))
+    out = capsys.readouterr().out
+    assert "⚠ Mặt nạ X hụt" in out and "⚠ Mặt nạ Y hụt" not in out
+
+
 def test_depth_scale_ignores_pose_and_flags_bad_depth():
     K = {"fx": 1500.0, "fy": 1500.0, "cx": 1024.0, "cy": 1024.0}
     a3 = np.zeros((3, 28, 3))
