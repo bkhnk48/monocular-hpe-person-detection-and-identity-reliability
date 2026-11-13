@@ -8,54 +8,26 @@
     "Chuyển một mục giữa 'validation' và 'test' bằng cách cắt/dán nguyên khối { ... }."
   ],
   "base_dir": "../..",
-  "smpl_model": "WHAM/dataset/body_models/smpl/SMPL_NEUTRAL.pkl",
+  "smpl_model": "WHAM_BK/dataset/body_models/smpl/SMPL_NEUTRAL.pkl",
   "output_dir": "monocular-hpe-person-detection-and-identity-reliability/outputs/mapping",
 
   "validation": [
     {
-      "name": "mpi_S1_Seq1_cam8",
-      "wham_pkl": "1CSBmSMopCow0wGBkNuSyPymyzQsLYfB_",
+      "name": "mpi_S1_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+      "wham_pkl": "16Yna92FAfKzE7UmzDQi5QCTRogE7s_RK",
       "gt": {
-        "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
-        "camera": 8,
-        "person": "S1"
+        "type": "mpi_overlay_csv",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/S8c0f0_S8c0f4750_s0.5/gt_3d_scene.csv"
       },
       "overlay_video": "",
       "fps": 25
     },
     {
-      "name": "mpi_S1_Seq1_cam1",
-      "wham_pkl": "1bHV4zbKYRuZNYaW6zGwBSVXJKqnGaCbx",
+      "name": "mpi_S8c0f1500_S8c0f2750_s0.5_cam0",
+      "wham_pkl": "14XX7J8YbPLkFKRYRQebH3oYtCw6mMudA",
       "gt": {
-        "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
-        "camera": 1,
-        "person": "S1"
-      },
-      "overlay_video": "",
-      "fps": 25
-    },
-    {
-      "name": "mpi_S1_Seq1_cam0",
-      "wham_pkl": "1_WUtbszaKVeeSbc2tJGdiXB5f7UVEDdP",
-      "gt": {
-        "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
-        "camera": 0,
-        "person": "S1"
-      },
-      "overlay_video": "",
-      "fps": 25
-    },
-    {
-      "name": "mpi_S8_Seq1_cam4",
-      "wham_pkl": "1WwAgFP1vU8C40UutRvgS2CrF-59D1hQ1",
-      "gt": {
-        "type": "mpi",
-        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
-        "camera": 4,
-        "person": "S8"
+        "type": "mpi_overlay_csv",
+        "path": "1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-"
       },
       "overlay_video": "",
       "fps": 25
