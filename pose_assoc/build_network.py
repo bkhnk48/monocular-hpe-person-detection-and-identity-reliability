@@ -38,7 +38,11 @@ from .network import arcs_frame, build_network, nodes_frame
 from .solvers.multi_mcf import solve_network
 
 REPO = Path(__file__).resolve().parent.parent
-GT_LIMB_SLICE = {"mpi13": slice(1, 13), "coco17": slice(5, 17)}
+GT_LIMB_SLICE = {
+    "mpi13": slice(1, 13),
+    "coco17": slice(5, 17),
+    "mpi_overlay_csv": slice(2, 14),
+}
 OVERRIDES = {"alpha": "alpha", "gamma": "gamma", "c_fp": "c_fp", "c_fn": "c_fn",
              "c_disappear": "c_disappear", "c_reappear": "c_reappear"}
 
@@ -88,10 +92,22 @@ def find_sequence(manifest: dict, name: str) -> dict:
 
 def load_inputs(mod, manifest: dict, seq: dict):
     seq["out_dir"].mkdir(parents=True, exist_ok=True)
-    wham = mod.load_wham_csv(seq, manifest["smpl_model"])
+
+    wham = mod.load_wham_csv(
+        seq,
+        manifest["smpl_model"],
+    )
+
+    print("  Chuẩn bị Ground Truth ...")
+    gt_config = mod.resolve_gt_path(seq)
+
     print("  Đọc Ground Truth ...")
-    gt, skel = mod.load_gt(seq["gt"])
-    return detections_from_csv(wham), gt_limbs(gt, skel)
+    gt, skel = mod.load_gt(gt_config)
+
+    return (
+        detections_from_csv(wham),
+        gt_limbs(gt, skel),
+    )
 
 
 def export(out: Path, net, flow, assign: pd.DataFrame, summary: dict, full: bool):
