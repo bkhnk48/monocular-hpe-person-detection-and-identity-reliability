@@ -236,6 +236,16 @@ def sequence_status(seq: dict) -> str:
 
 
 def print_status(manifest: dict):
+    all_seqs = [
+        seq
+        for split in SPLITS
+        for seq in manifest.get(split, [])
+    ]
+    name_width = max(
+        28,
+        max((len(seq["name"]) for seq in all_seqs), default=0),
+    )
+
     for split in SPLITS:
         print(f"\n[{split}]")
 
@@ -249,7 +259,7 @@ def print_status(manifest: dict):
                 n_videos += " (thiếu output)"
 
             print(
-                f"  {seq['name']:<28} "
+                f"  {seq['name']:<{name_width}} "
                 f"{n_videos:<22} "
                 f"{sequence_status(seq)}"
             )
@@ -343,30 +353,36 @@ def resolve_gt_path(seq: dict) -> dict:
 
     - GT local: giữ nguyên đường dẫn.
     - GT Google Drive: tải về thư mục output của sequence.
-    - Nếu file cache đã tồn tại: sử dụng lại, không tải lại.
+    - Cache được định danh bằng File ID, tránh dùng nhầm file khi manifest đổi ID.
 
-    Trả về một bản sao cấu hình GT với path là Path local.
-    Không thay đổi File ID gốc trong manifest.
+    Trả về bản sao cấu hình GT, trong đó path luôn là Path local.
+    Không thay đổi File ID gốc trong seq.
     """
     gt = dict(seq["gt"])
 
-    if not gt.get("path_is_drive"):
+    if not gt.get("path_is_drive", False):
         return gt
 
-    file_id = gt["path"]
-    cache_path = seq["out_dir"] / "gt_3d_scene.csv"
-
-    if cache_path.is_file() and cache_path.stat().st_size > 0:
-        print(f"  Dùng lại GT CSV đã tải: {cache_path}")
-    else:
-        print("  Ground Truth là Google Drive File ID.")
-        download_drive_file(
-            str(file_id),
-            cache_path,
+    if gt["type"] != "mpi_overlay_csv" and gt["type"] != "overlay_csv":
+        raise ValueError(
+            f"Google Drive GT hiện chỉ hỗ trợ mpi_overlay_csv và overlay_csv, "
+            f"không phải '{gt['type']}'."
         )
 
-    gt["path"] = cache_path
+    file_id = str(gt["path"])
 
+    if not is_google_drive_file_id(file_id):
+        raise ValueError(f"Google Drive File ID không hợp lệ: {file_id}")
+
+    cache_path = seq["out_dir"] / f"gt_{file_id}.csv"
+
+    if cache_path.is_file() and cache_path.stat().st_size > 0:
+        print(f"  Dùng lại GT CSV: {cache_path.name}")
+    else:
+        print(f"  Tải Ground Truth từ Google Drive: {file_id}")
+        download_drive_file(file_id, cache_path)
+
+    gt["path"] = cache_path
     return gt
 
 def wham_pkl_to_csv(pkl: Path, smpl: Path, out_csv: Path) -> pd.DataFrame:
@@ -533,7 +549,7 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
         - Dùng cột frame để đồng bộ với video composite.
         - src_frame chỉ là metadata của video nguồn.
         - Giữ nguyên tọa độ scene, không trừ pelvis.
-        - Giữ nguyên đơn vị mm.
+        - Trả về đơn vị m.
     """
     if not csv_path.is_file():
         raise FileNotFoundError(
@@ -633,7 +649,8 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
         if not np.isfinite(pts).any():
             continue
 
-        poses.setdefault(frame, {})[person] = pts
+        # CSV lưu mm; chuẩn hóa về mét như mpi_gt_poses và h4d_gt_poses.
+        poses.setdefault(frame, {})[person] = pts / 1000.0
 
     if not poses:
         raise ValueError(
