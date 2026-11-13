@@ -79,6 +79,10 @@ REPO = Path(__file__).resolve().parent.parent
 VIDEO_PATTERN = "../WHAM/inputs/mpi_inf_3dhpe/{subject}/Seq1/imageSequences/video_cam{camera}.avi"
 ANNOT_PATTERN = "data/raw/mpi_inf_3dhp/{subject}/annot.mat"
 REF_HEIGHT_MM = 1750.0           # chiều cao tham chiếu cho depth_scale (S8: chuỗi xương ~1670 mm)
+# Phông MPI: (G - max(R,B)) / G ~ 0.42-0.74 sát người. Áo len xám-xanh của S4: ~0.2 nhưng
+# G - max(R,B) ~ 15-35 > tau, nên chỉ dùng tau thì mất ~56% điểm ảnh người (Y lộ ra đè lên X).
+MIN_CHROMA = 0.40
+FILL_WARN = 0.45                 # mặt nạ / vùng quanh khung xương; S8 ~0.6 (trung vị)
 
 # 28 khớp MPI-INF-3DHP (zero-based)
 HEAD = 6
@@ -224,11 +228,13 @@ def body_region(j2d: np.ndarray, shape, scale: float, width: float) -> np.ndarra
 
 
 def person_alpha(img: np.ndarray, j2d: np.ndarray, tau: int, width: float,
-                 scale: Optional[float] = None):
+                 scale: Optional[float] = None, chroma: float = MIN_CHROMA):
     """-> (alpha float32 trong ROI, mặt nạ bool trong ROI, (x0, y0, x1, y1)) hoặc None.
 
     scale: cỡ người (px) quyết định độ dày vùng xương; nên lấy từ depth_scale. Bỏ trống
     hoặc NaN thì dùng person_scale(j2d) (khung 2D, hụt chân khi ngồi xổm).
+    chroma: chỉ coi là phông khi thêm (G - max(R,B)) / G > chroma, tức xanh đậm màu chứ không
+    chỉ ngả xanh. 0 = cách cũ: quần áo xám-xanh, da bị phông hắt xanh bị coi là phông.
     """
     h, w = img.shape[:2]
     s = float(scale) if scale is not None and np.isfinite(scale) else person_scale(j2d)
@@ -245,6 +251,8 @@ def person_alpha(img: np.ndarray, j2d: np.ndarray, tau: int, width: float,
     excess = g - np.maximum(b, r)
     # nền xanh: trội xanh rõ, hoặc bóng tối nhưng vẫn ngả xanh (giày đen R≈G≈B không bị loại)
     green = (excess > tau) | ((excess > 3) & (g > 0.42 * (b + g + r + 1)))
+    if chroma > 0:
+        green &= excess > chroma * np.maximum(g, 1)
     fg = (~green & region).astype(np.uint8)
     k = max(3, int(0.02 * s) | 1)
     fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
@@ -261,6 +269,19 @@ def person_alpha(img: np.ndarray, j2d: np.ndarray, tau: int, width: float,
     fg = np.isin(lab, keep[keep > 0])
     alpha = cv2.GaussianBlur(fg.astype(np.float32), (5, 5), 0)
     return alpha, fg, (x0, y0, x1, y1)
+
+
+def mask_fill(fg: np.ndarray, j2d: np.ndarray, box, width: float,
+              scale: Optional[float] = None) -> float:
+    """Tỉ lệ vùng quanh khung xương (độ dày width) được giữ làm người.
+
+    S8: trung vị ~0.6. Thấp bất thường (< FILL_WARN) nghĩa là chroma key đang xoá quần áo
+    hoặc da; khi đó người đứng sau lộ ra đè lên người đứng trước ở chỗ bị xoá.
+    """
+    x0, y0 = box[:2]
+    s = float(scale) if scale is not None and np.isfinite(scale) else person_scale(j2d)
+    region = body_region(j2d - (x0, y0), fg.shape, s, width)
+    return float(fg[region].sum() / max(int(region.sum()), 1))
 
 
 def paste_scaled(dst: np.ndarray, src: np.ndarray, alpha: np.ndarray, box,
@@ -420,8 +441,12 @@ def composite(X: dict, Y: dict, n: int, out: Path, args) -> pd.DataFrame:
             sx, sy = X["start"] + t, Y["start"] + t
             jx, jy = X["j2d"][sx], Y["j2d"][sy]
             img = img_x.copy()
-            px = person_alpha(img_x, jx, args.tau, args.width, X["body_px"][sx])
-            py = person_alpha(img_y, jy, args.tau, args.width, Y["body_px"][sy])
+            px = person_alpha(img_x, jx, args.tau, args.width, X["body_px"][sx], args.min_chroma)
+            py = person_alpha(img_y, jy, args.tau, args.width, Y["body_px"][sy], args.min_chroma)
+            fill_x = (mask_fill(px[1], jx, px[2], args.width, X["body_px"][sx]) if px is not None
+                      else np.nan)
+            fill_y = (mask_fill(py[1], jy, py[2], args.width, Y["body_px"][sy]) if py is not None
+                      else np.nan)
             my = (paste_scaled(img, img_y, py[0], py[2], args.y_scale, center) if py is not None
                   else np.zeros(img.shape[:2], bool))
             mx = (paste_scaled(img, img_x, px[0], px[2]) if px is not None     # X luôn đứng trước
@@ -429,7 +454,7 @@ def composite(X: dict, Y: dict, n: int, out: Path, args) -> pd.DataFrame:
             area_x, area_y = np.count_nonzero(mx), np.count_nonzero(my)
             vis_y = 1 - np.count_nonzero(mx & my) / area_y if area_y else 1.0
             y_cut = bool(touches_border(jy, Y["size"]))
-            rows.append((t, sx, sy, area_x, area_y, vis_y, y_cut))
+            rows.append((t, sx, sy, area_x, area_y, vis_y, y_cut, fill_x, fill_y))
             if args.preview_every and t % args.preview_every == 0:
                 draw_preview(img, t, vis_y, jx, shrink(jy, args.y_scale, center),
                              out / "preview" / f"f{t:05d}.jpg")
@@ -447,7 +472,7 @@ def composite(X: dict, Y: dict, n: int, out: Path, args) -> pd.DataFrame:
             writer.wait()
     print(f"\r  Đã ghép {len(rows)} frame.        ")
     return pd.DataFrame(rows, columns=["frame", "src_x", "src_y", "area_x", "area_y", "vis_y",
-                                       "y_cut"])
+                                       "y_cut", "fill_x", "fill_y"])
 
 
 def rel_path(path, base: Path) -> str:
@@ -473,7 +498,8 @@ def write_meta(out: Path, X: dict, Y: dict, frames: pd.DataFrame, args):
         "version": 2, "name": args.name, "created": datetime.now().isoformat(timespec="seconds"),
         "fps": X["fps"], "size": list(X["size"]), "out_scale": args.out_scale,
         "n_frames": len(frames), "persons": persons,
-        "chroma_tau": args.tau, "body_width": args.width, "ref_height_mm": args.ref_height,
+        "chroma_tau": args.tau, "chroma_min_ratio": args.min_chroma,
+        "body_width": args.width, "ref_height_mm": args.ref_height,
         "frames_csv": "overlay_frames.csv",
         "video": None if (args.preview_only or args.mode == "generate") else "composite.mp4",
         "frames_dir": "frames_raw" if (args.mode == "generate" and not args.preview_only) else None,
@@ -572,6 +598,14 @@ def summarize(frames: pd.DataFrame):
     if "y_cut" in frames and frames["y_cut"].any():
         print(f"  ⚠ Y bị mép khung nguồn cắt ở {frames['y_cut'].mean():.1%} số frame "
               "(thành đường cắt thẳng giữa ảnh ghép; cột y_cut trong overlay_frames.csv)")
+    for who, col in (("X", "fill_x"), ("Y", "fill_y")):
+        if col not in frames:
+            continue
+        fill = frames[col].median()
+        print(f"  Mặt nạ {who} giữ {fill:.0%} vùng quanh khung xương (trung vị; S8 ~60%)")
+        if fill < FILL_WARN:
+            print(f"  ⚠ Mặt nạ {who} hụt: chroma key có thể đang xoá quần áo/da màu xanh, người đứng "
+                  "sau sẽ lộ ra đè lên chỗ bị xoá. Xem mask_qa.jpg; thử tăng --min-chroma.")
 
 
 # ============================================================
@@ -697,6 +731,7 @@ def mask_qa(out: Path, n: int = 8, min_sep: int = 50, per_row: int = 4) -> Path:
     meta = json.loads((out / "overlay_meta.json").read_text(encoding="utf-8"))
     frames = pd.read_csv(out / meta["frames_csv"])
     tau, width = int(meta.get("chroma_tau", 12)), float(meta.get("body_width", 0.16))
+    chroma = float(meta.get("chroma_min_ratio", 0.0))   # clip cũ: chỉ có tau
     height = meta.get("ref_height_mm")         # clip cũ (không có khoá này): cỡ theo khung 2D
     rows = []
     for name, p in meta["persons"].items():
@@ -718,7 +753,7 @@ def mask_qa(out: Path, n: int = 8, min_sep: int = 50, per_row: int = 4) -> Path:
         for i in sorted(pick):
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(src[i]))
             ok, img = cap.read()
-            r = person_alpha(img, js[i], tau, width, body[i]) if ok else None
+            r = person_alpha(img, js[i], tau, width, body[i], chroma) if ok else None
             if r is None:
                 continue
             alpha, _, (x0, y0, x1, y1) = r
@@ -799,6 +834,9 @@ def parse_args():
     p.add_argument("--name", help="tên thư mục kết quả (mặc định tự sinh)")
     p.add_argument("--out-root", type=Path, default=REPO / "outputs" / "overlay")
     p.add_argument("--tau", type=int, default=12, help="ngưỡng chroma key: G - max(R,B) > tau là nền")
+    p.add_argument("--min-chroma", type=float, default=MIN_CHROMA,
+                   help="chroma key: chỉ là nền khi thêm (G - max(R,B)) / G > giá trị này (mặc định "
+                        f"{MIN_CHROMA}); 0 = cách cũ, áo xám-xanh hay da hắt xanh bị coi là nền")
     p.add_argument("--width", type=float, default=0.16, help="độ dày vùng xương / cỡ người")
     p.add_argument("--ref-height", type=float, default=REF_HEIGHT_MM, help="chiều cao tham chiếu (mm) cho cỡ người theo độ sâu")
     p.add_argument("--out-scale", type=float, default=1.0, help="thu nhỏ cả video xuất")
