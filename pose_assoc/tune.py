@@ -72,6 +72,19 @@ def seq_key(seq: dict) -> str:
         return f"drive:{seq['wham_pkl']}"
     return f"local:{Path(seq['wham_pkl']).resolve()}"
 
+def gt_signature(seq: dict) -> str:
+    """Dấu vân tay nội dung GT, không phụ thuộc máy."""
+    gt = seq["gt"]
+    if gt.get("path_is_drive"):
+        return f"{gt['type']}:drive:{gt['path']}"
+    p, h = Path(gt["path"]), hashlib.sha1(gt["type"].encode())
+    if p.is_dir():                      # harmony4d: tên + kích thước các tệp
+        for f in sorted(p.rglob("*")):
+            if f.is_file():
+                h.update(f"{f.relative_to(p).as_posix()}:{f.stat().st_size}".encode())
+    elif p.is_file():
+        h.update(p.read_bytes())
+    return h.hexdigest()[:16]
 
 def mapping_signature(seq: dict) -> str | None:
     """Dấu vân tay của nhãn gán tay (file nhỏ) để biết nhãn đã bị gán lại chưa."""
@@ -158,12 +171,16 @@ def classify(seq: dict, key: str, reg: dict, test_keys: set) -> str:
     if e.get("excluded"):
         return "excluded"
     sig = mapping_signature(seq)
+    old_gt = e.get("gt_signature")
+    if old_gt is not None and old_gt != gt_signature(seq):
+        return "gt_changed"
     # Không có nhãn ở chỗ mới (ví dụ điền lại dưới tên khác) -> vẫn là sequence đã có
-    return "changed" if sig is not None and sig != e["mapping_sig"] else "known"
+    return "changed" if sig is not None and (sig != e["mapping_sig"])  else "known"
 
 
 MESSAGES = {"new": "mới            -> dựng mạng",
             "changed": "NHÃN ĐÃ ĐỔI    -> dựng lại với nhãn mới",
+            "gt_changed": "GT ĐÃ ĐỔI        -> dựng lại với GT mới",
             "known": "ĐÃ CÓ (lần {r}) -> bỏ qua, dùng dữ liệu đã lưu",
             "excluded": "ĐÃ BỊ LOẠI     -> bỏ qua",
             "unlabeled": "chưa có mapping_frames.csv -> bỏ qua (gán nhãn trước)",
@@ -193,11 +210,11 @@ def register_validation(mod, manifest: dict, reg: dict, base: CostParams, rnd: i
         state = classify(seq, key, reg, test_keys)
         old = reg["sequences"].get(key, {})
         print(f"  {seq['name']:<28} " + state_message(state, seq, old))
-        if state in ("new", "changed"):
+        if state in ("new", "changed", "gt_changed"):
             prepare_sequence(mod, manifest, seq, base)
             reg["sequences"][key] = {
                 "name": seq["name"], "gt": str(seq["gt"]["path"]),
-                "mapping_sig": mapping_signature(seq), "excluded": False,
+                "mapping_sig": mapping_signature(seq), "gt_signature": gt_signature(seq), "excluded": False,
                 "added_round": old.get("added_round", rnd), "updated_round": rnd}
             changed += 1
     return changed
