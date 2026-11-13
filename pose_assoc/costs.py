@@ -2,8 +2,9 @@
 Chi phí của mạng time-expanded.
 
 Ký hiệu (đặt tên theo configs/default.yaml, mục association):
-  alpha  = weights.pose       trọng số chi phí pose (unary)
-  gamma  = weights.temporal   trọng số chi phí chuyển động giữa 2 frame
+  alpha  = weights.pose          trọng số chi phí pose (unary)
+  gamma  = weights.temporal      trọng số chi phí chuyển động giữa 2 frame
+  eta    = weights.displacement  trọng số C_V: độ dịch 2D giữa 2 detection liên tiếp
   C_FP, C_FN, C_disappear, C_reappear, chi phí biên
 
 Chi phí unary của nút "detection d gán cho người k ở frame t":
@@ -42,6 +43,8 @@ class CostParams:
     start_missed: float = 0.0
     end_detected: float = 0.0
     end_missed: float = 0.0
+    eta: float = 0.0            # weights.displacement (C_V; 0 = tắt)
+    disp_scale: float = 0.05    # s_V: độ dịch 2D tính theo cỡ người trên ảnh
 
     @classmethod
     def from_config(cls, assoc: dict) -> "CostParams":
@@ -54,7 +57,8 @@ class CostParams:
                    gap_power=assoc.get("temporal", {}).get("gap_power", 1.0),
                    start_detected=b.get("start_detected", 0.0),
                    start_missed=b.get("start_missed", 0.0),
-                   end_detected=b.get("end_detected", 0.0), end_missed=b.get("end_missed", 0.0))
+                   end_detected=b.get("end_detected", 0.0), end_missed=b.get("end_missed", 0.0),
+                   eta=w.get("displacement", 0.0), disp_scale=s.get("displacement", 0.05))
 
 
 def procrustes(pred: np.ndarray, gt: np.ndarray):
@@ -102,3 +106,34 @@ def motion_cost(rms_m, p: CostParams, gap=1):
     """
     gap = np.maximum(np.asarray(gap, float), 1.0)
     return p.gamma * np.asarray(rms_m) / (p.motion_scale_m * gap ** p.gap_power)
+
+
+def person_scale_2d(uv: np.ndarray) -> float:
+    """Cỡ người trên ảnh (px): cạnh dài hơn của khung bao các khớp hợp lệ, tối thiểu 40 px."""
+    ok = np.isfinite(uv).all(1)
+    if not ok.any():
+        return 40.0
+    pts = uv[ok]
+    return float(max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1]), 40.0))
+
+
+def displacement_2d(uv_a, uv_b) -> float:
+    """Độ dịch 2D giữa 2 detection: RMS độ dịch các khớp / cỡ người trung bình.
+
+    Không dùng GT. Cùng một người ở 2 frame liền nhau dịch ít; nhảy sang người khác
+    thì dịch cỡ khoảng cách giữa 2 người. 0 nếu thiếu toạ độ hoặc ít hơn 8 khớp
+    hợp lệ (cùng quy ước với motion_rms).
+    """
+    if uv_a is None or uv_b is None:
+        return 0.0
+    valid = np.isfinite(uv_a).all(1) & np.isfinite(uv_b).all(1)
+    if valid.sum() < MIN_VALID_JOINTS:
+        return 0.0
+    rms = np.sqrt(np.mean(np.sum((uv_b[valid] - uv_a[valid]) ** 2, axis=1)))
+    return float(rms / ((person_scale_2d(uv_a) + person_scale_2d(uv_b)) / 2.0))
+
+
+def displacement_cost(disp, p: CostParams, gap=1):
+    """C_V = eta * độ dịch / (s_V * dt^gap_power), chia dt giống motion_cost."""
+    gap = np.maximum(np.asarray(gap, float), 1.0)
+    return p.eta * np.asarray(disp, float) / (p.disp_scale * gap ** p.gap_power)
