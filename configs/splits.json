@@ -3,8 +3,9 @@
     "Manifest các sequence cho chương trình scripts/wham_gt_mapping.py.",
     "Đường dẫn tương đối tính từ base_dir; base_dir tương đối tính từ thư mục chứa file này.",
     "gt.type = 'mpi' (annot.mat, 1 người) hoặc 'harmony4d' (thư mục poses3d/*.npy).",
-    "overlay_video: video WHAM vẽ đè lên video gốc (output_*.mp4). Bỏ trống nếu không có -> ghép 2 video.",
-    "fps chỉ dùng khi không có overlay_video; nếu có overlay thì lấy fps của overlay để 3 video khớp frame.",
+    "output_wham_video: video WHAM vẽ đè lên video gốc (output_*.mp4). Bỏ trống nếu không có -> ghép 2 video.",
+    "fps chỉ dùng khi không có output_wham_video; nếu có thì lấy fps của video đó để 3 video khớp frame.",
+    "image_size: [W, H] của video WHAM đã chạy; cần khi eta > 0 (chiếu WHAM lên ảnh, tạo WHAM-2D.csv).",
     "Chuyển một mục giữa 'validation' và 'test' bằng cách cắt/dán nguyên khối { ... }."
   ],
   "base_dir": "../..",
@@ -20,6 +21,7 @@
         "path": "10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF"
       },
       "output_wham_video": "",
+      "image_size": [2048, 2048],
       "fps": 25
     },
     {
@@ -30,6 +32,111 @@
         "path": "1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-"
       },
       "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam0",
+      "wham_pkl": "1eowaidAe9lcGgSFLEppv49E9NTUT2Jtp",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+        "camera": 0,
+        "person": "S8"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam8",
+      "wham_pkl": "1xvacdsfs4Ap98PP72TvJGaREnUQ4Wkco",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+        "camera": 8,
+        "person": "S8"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam7",
+      "wham_pkl": "1AkjHAIGhlvjHKjsZ9OVHpOurK26PoB8-",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+        "camera": 7,
+        "person": "S8"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam6",
+      "wham_pkl": "1np-o_9zSccQQOiOwXTckGawirZjqDQxV",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+        "camera": 6,
+        "person": "S8"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S8_Seq1_cam4",
+      "wham_pkl": "1WwAgFP1vU8C40UutRvgS2CrF-59D1hQ1",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S8/annot.mat",
+        "camera": 4,
+        "person": "S8"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S1_Seq1_cam8",
+      "wham_pkl": "1CSBmSMopCow0wGBkNuSyPymyzQsLYfB_",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+        "camera": 8,
+        "person": "S1"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S1_Seq1_cam1",
+      "wham_pkl": "1bHV4zbKYRuZNYaW6zGwBSVXJKqnGaCbx",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+        "camera": 1,
+        "person": "S1"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
+      "fps": 25
+    },
+    {
+      "name": "mpi_S1_Seq1_cam0",
+      "wham_pkl": "1_WUtbszaKVeeSbc2tJGdiXB5f7UVEDdP",
+      "gt": {
+        "type": "mpi",
+        "path": "monocular-hpe-person-detection-and-identity-reliability/data/raw/mpi_inf_3dhp/S1/annot.mat",
+        "camera": 0,
+        "person": "S1"
+      },
+      "output_wham_video": "",
+      "image_size": [2048, 2048],
       "fps": 25
     }
   ],
@@ -43,6 +150,7 @@
         "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
       },
       "output_wham_video": "WHAM/output/demo/harmony4D_041_grappling2_cam07_ffmpeg/output_harmony4D_041_grappling2_cam07_ffmpeg.mp4",
+      "image_size": [3840, 2160],
       "skip": false,
       "fps": 20
     },
@@ -54,6 +162,7 @@
         "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
       },
       "output_wham_video": "WHAM/output/demo/harmony4D_041_grappling2_cam07_ffmpeg/output_harmony4D_041_grappling2_cam07_ffmpeg.mp4",
+      "image_size": [3840, 2160],
       "fps": 20
     },
     {
@@ -64,6 +173,7 @@
         "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
       },
       "output_wham_video": "",
+      "image_size": [3840, 2160],
       "skip": false,
       "fps": 20
     },
