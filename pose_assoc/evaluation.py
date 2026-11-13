@@ -24,8 +24,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
-from .costs import CostParams
-from .network import Network
+from .costs import CostParams, displacement_cost
+from .network import Network, arc_disp
 
 
 def _get(obj: Any, key: str, default=None):
@@ -414,10 +414,18 @@ def objective_breakdown(net: Network, flow: np.ndarray, p: CostParams) -> dict:
     arc_costs = np.asarray(net.arc_cost)[flow == 1]
     pose = sum(p.alpha * n["pa_mm"] / p.pose_scale_mm for n in dets)
     n_fn = sum(n["kind"] == "miss" for n in used)
+    # C_V nằm sẵn trong arc_cost của cung "dd": tách ra để không đếm hai lần
+    disp = np.asarray(arc_disp(net), float)
+    displacement = 0.0
+    if p.eta and len(disp) == len(net.arc_sub):
+        on = (np.asarray(flow) == 1) & (np.asarray(net.arc_sub) == "dd")
+        gap = np.asarray(net.__dict__.get("arc_gap") or np.ones(len(on)), float)
+        displacement = float(displacement_cost(disp[on], p, gap[on]).sum())
     return {"pose": pose,
             "false_positive": p.c_fp * (n_det_total - len(dets)),
             "false_negative": p.c_fn * n_fn,
-            "temporal_and_gaps": float(arc_costs[kinds == "move"].sum()),
+            "temporal_and_gaps": float(arc_costs[kinds == "move"].sum()) - displacement,
+            "displacement": displacement,
             "boundary": float(arc_costs[np.isin(kinds, ["start", "end"])].sum()),
             "n_detections": n_det_total, "n_used": len(dets), "n_missed": int(n_fn)}
 
