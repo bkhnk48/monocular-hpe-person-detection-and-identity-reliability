@@ -3,7 +3,7 @@
     "Manifest các sequence cho chương trình scripts/wham_gt_mapping.py.",
     "Đường dẫn tương đối tính từ base_dir; base_dir tương đối tính từ thư mục chứa file này.",
     "gt.type = 'mpi' (annot.mat, 1 người) hoặc 'harmony4d' (thư mục poses3d/*.npy).",
-    "output_wham_video: video WHAM vẽ đè lên video gốc (output_*.mp4). Bỏ trống nếu không có -> ghép 2 video.",
+    "output_wham_video: video WHAM vẽ đè lên video gốc (output_*.mp4), đường dẫn hoặc Drive File ID (tải một lần vào thư mục output của sequence). Bỏ trống nếu không có -> ghép 2 video.",
     "fps chỉ dùng khi không có output_wham_video; nếu có thì lấy fps của video đó để 3 video khớp frame.",
     "image_size: [W, H] của video WHAM đã chạy; cần khi eta > 0 (chiếu WHAM lên ảnh, tạo WHAM-2D.csv).",
     "Chuyển một mục giữa 'validation' và 'test' bằng cách cắt/dán nguyên khối { ... }."
@@ -149,7 +149,7 @@
         "type": "harmony4d",
         "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
       },
-      "output_wham_video": "WHAM/output/demo/harmony4D_041_grappling2_cam07_ffmpeg/output_harmony4D_041_grappling2_cam07_ffmpeg.mp4",
+      "output_wham_video": "1alTVEp6vOHS0D2HkoGQcPBUisqBojqeK",
       "image_size": [3840, 2160],
       "skip": false,
       "fps": 20
@@ -172,7 +172,7 @@
         "type": "harmony4d",
         "path": "optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d"
       },
-      "output_wham_video": "",
+      "output_wham_video": "1K-0Jp_8VKcu8e5BMoHnfcFMShQN1G57x",
       "image_size": [3840, 2160],
       "skip": false,
       "fps": 20
