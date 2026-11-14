@@ -5,7 +5,8 @@ Gán body_id của WHAM với người thật trong Ground Truth -> mapping.txt.
 Quy trình cho mỗi sequence trong tập được chọn (validation / test) của manifest:
   1. Đã có mapping.txt -> bỏ qua.
   2. pkl WHAM -> RA-WHAM.csv -> video animation WHAM (wham_anim.mp4).
-  3. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D, hoặc
+  3. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D — thư mục,
+     tệp poses3d.zip hoặc Drive File ID của zip đó —, hoặc
      overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py)
      -> video animation GT (gt_anim.mp4).
      Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py.
@@ -34,8 +35,10 @@ import json
 import pickle
 import tempfile
 import re
+import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import cv2
@@ -149,9 +152,14 @@ def is_google_drive_file_id(value) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{20,}", value) is not None
 
 
+# Kiểu GT được phép ghi gt.path là Drive File ID (harmony4d: ID của poses3d.zip).
+DRIVE_GT_TYPES = ("mpi_overlay_csv", "overlay_csv", "harmony4d")
+H4D_GT_MARKER = ".gt_source"   # ghi nguồn của bản GT đã giải nén, để biết khi nào giải nén lại
+
+
 def load_manifest(path: Path) -> dict:
-    """Đọc manifest; wham_pkl, gt.path (GT CSV) và output_wham_video có thể là Drive
-    File ID hoặc đường dẫn cục bộ."""
+    """Đọc manifest; wham_pkl, gt.path (GT CSV, poses3d.zip của harmony4d) và
+    output_wham_video có thể là Drive File ID hoặc đường dẫn cục bộ."""
     m = json.loads(path.read_text(encoding="utf-8"))
     base = (path.parent / m.get("base_dir", ".")).resolve()
 
@@ -173,11 +181,11 @@ def load_manifest(path: Path) -> dict:
             seq["gt"]["path_is_drive"] = is_google_drive_file_id(gt_source)
 
             if seq["gt"]["path_is_drive"]:
-                if gt_type not in ("mpi_overlay_csv", "overlay_csv"):
+                if gt_type not in DRIVE_GT_TYPES:
                     raise ValueError(
                         f"Sequence '{seq['name']}': Google Drive File ID "
-                        f"chỉ được hỗ trợ cho GT dạng CSV, không phải "
-                        f"'{gt_type}'."
+                        f"chỉ được hỗ trợ cho GT dạng CSV hoặc harmony4d "
+                        f"(poses3d.zip), không phải '{gt_type}'."
                     )
 
                 # Giữ nguyên File ID trong manifest.
@@ -398,12 +406,93 @@ def fetch_output_wham_video(seq: dict) -> Path | None:
     return video
 
 
+def h4d_npy_dir(root: Path) -> Path | None:
+    """Thư mục chứa *.npy trong bản giải nén: ưu tiên thư mục tên poses3d, rồi thư
+    mục nông nhất (zip có thể có sẵn poses3d/ hoặc để .npy ngay ở gốc)."""
+    dirs = {p.parent for p in root.rglob("*.npy")}
+    if not dirs:
+        return None
+    return min(dirs, key=lambda d: (d.name != "poses3d", len(d.parts), str(d)))
+
+
+def cached_h4d_gt(cache_dir: Path, source: str) -> Path | None:
+    """Thư mục *.npy đã giải nén trước đó, nếu nó được giải nén từ đúng nguồn này."""
+    marker = cache_dir / H4D_GT_MARKER
+    if marker.is_file() and marker.read_text(encoding="utf-8") == source:
+        return h4d_npy_dir(cache_dir)
+    return None
+
+
+def extract_h4d_gt_zip(zip_path: Path, cache_dir: Path, source: str) -> Path:
+    """Giải nén zip poses3d vào cache_dir rồi trả về thư mục chứa *.npy.
+
+    Giải nén vào thư mục tạm, kiểm tra có .npy, ghi dấu nguồn rồi mới đổi tên:
+    bị ngắt hay zip hỏng thì không để lại bản giải nén dở bị dùng nhầm lần sau.
+    """
+    tmp = cache_dir.with_name(cache_dir.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                members = [n for n in zf.namelist() if not n.startswith("__MACOSX/")]
+                zf.extractall(tmp, members)
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"GT không phải tệp zip hợp lệ: {zip_path}") from exc
+        if h4d_npy_dir(tmp) is None:
+            raise ValueError(f"Không có tệp .npy nào trong {zip_path.name}")
+        (tmp / H4D_GT_MARKER).write_text(source, encoding="utf-8")
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        tmp.rename(cache_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return h4d_npy_dir(cache_dir)
+
+
+def resolve_h4d_gt_zip(seq: dict, gt: dict) -> Path:
+    """GT harmony4d dạng poses3d.zip (Drive File ID hoặc tệp .zip trên máy): giải nén
+    một lần vào out_dir (gt_<ID>/ hoặc gt_<tên zip>/), trả về thư mục chứa *.npy.
+
+    Dùng lại bản đã giải nén nếu cùng nguồn (cùng ID; zip trên máy: cùng đường dẫn,
+    kích thước, thời điểm sửa). Zip tải từ Drive bị xoá sau khi giải nén.
+    """
+    out_dir, is_drive = seq["out_dir"], gt.get("path_is_drive", False)
+    if is_drive:
+        file_id = str(gt["path"])
+        zip_path, cache_dir = out_dir / f"gt_{file_id}.zip", out_dir / f"gt_{file_id}"
+        source = f"drive:{file_id}"
+    else:
+        zip_path = Path(gt["path"])
+        if not zip_path.is_file():
+            raise FileNotFoundError(f"Không thấy tệp GT: {zip_path}")
+        st = zip_path.stat()
+        cache_dir = out_dir / f"gt_{zip_path.stem}"
+        source = f"local:{zip_path.resolve()}|{st.st_size}|{st.st_mtime_ns}"
+    cached = cached_h4d_gt(cache_dir, source)
+    if cached is not None:
+        print(f"  Dùng lại GT đã giải nén: {cache_dir.name}/")
+        return cached
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if not is_drive:
+        print(f"  Giải nén GT {zip_path.name} -> {cache_dir.name}/")
+        return extract_h4d_gt_zip(zip_path, cache_dir, source)
+    try:
+        download_drive_file(file_id, zip_path, what="GT poses3d.zip")
+        print(f"  Giải nén GT -> {cache_dir.name}/")
+        return extract_h4d_gt_zip(zip_path, cache_dir, source)
+    finally:                                 # bỏ zip đã tải và tệp tải dở của gdown
+        zip_path.unlink(missing_ok=True)
+        for part in out_dir.glob(zip_path.name + "*.part"):
+            part.unlink(missing_ok=True)
+
+
 def resolve_gt_path(seq: dict) -> dict:
     """
     Chuẩn bị Ground Truth để xử lý.
 
-    - GT local: giữ nguyên đường dẫn.
-    - GT Google Drive: tải về thư mục output của sequence.
+    - GT local: giữ nguyên đường dẫn (harmony4d: thư mục poses3d).
+    - harmony4d là tệp .zip hoặc Drive File ID của poses3d.zip: giải nén một lần
+      vào thư mục output của sequence (resolve_h4d_gt_zip).
+    - GT CSV trên Google Drive: tải về thư mục output của sequence.
     - Cache được định danh bằng File ID, tránh dùng nhầm file khi manifest đổi ID.
 
     Trả về bản sao cấu hình GT, trong đó path luôn là Path local.
@@ -411,12 +500,18 @@ def resolve_gt_path(seq: dict) -> dict:
     """
     gt = dict(seq["gt"])
 
+    if gt["type"] == "harmony4d" and (
+        gt.get("path_is_drive", False) or str(gt["path"]).lower().endswith(".zip")
+    ):
+        gt["path"] = resolve_h4d_gt_zip(seq, gt)
+        return gt
+
     if not gt.get("path_is_drive", False):
         return gt
 
-    if gt["type"] != "mpi_overlay_csv" and gt["type"] != "overlay_csv":
+    if gt["type"] not in DRIVE_GT_TYPES:
         raise ValueError(
-            f"Google Drive GT hiện chỉ hỗ trợ mpi_overlay_csv và overlay_csv, "
+            f"Google Drive GT hiện chỉ hỗ trợ {', '.join(DRIVE_GT_TYPES)}, "
             f"không phải '{gt['type']}'."
         )
 
