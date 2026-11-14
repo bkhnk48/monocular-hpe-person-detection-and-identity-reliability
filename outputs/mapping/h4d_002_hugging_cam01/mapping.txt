@@ -1,0 +1,17 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: h4d_002_hugging_cam01
+# wham_pkl: 16AQHFu9RT-InW3XVM-j4yIgdqT3j-FVt
+# gt: 1BLrD11N_lFZoJDIAdf1NrM4iISBiLO31
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+# NGUỒN: nhãn theo vị trí trên ảnh (GT 3D chiếu qua colmap 002_hugging, colmap_from_aria['aria01']):
+#        detection thuộc người GT nếu trung vị khoảng cách khớp <= 400 px và <= 0.5 lần tới người kia,
+#        mỗi người tối đa 1 detection/frame. Thay cho nhãn tay bị đảo người (2026-11-14).
+#        Không dùng clip này để đánh giá C_2D (beta): nhãn và chi phí cùng lấy từ GT chiếu lên ảnh.
+# 0 = (không phải người GT) @ 0-2, 92-96, 100-103, 106-107, 172-175
+0 = aria02 @ 3-91, 104-105, 176-300
+0 = aria01 @ 97-99, 108-171
+1 = aria01
+32 = aria01
+# 40 = (không phải người GT)
