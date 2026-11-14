@@ -150,7 +150,8 @@ def is_google_drive_file_id(value) -> bool:
 
 
 def load_manifest(path: Path) -> dict:
-    """Đọc manifest; wham_pkl có thể là Drive File ID hoặc đường dẫn cục bộ."""
+    """Đọc manifest; wham_pkl, gt.path (GT CSV) và output_wham_video có thể là Drive
+    File ID hoặc đường dẫn cục bộ."""
     m = json.loads(path.read_text(encoding="utf-8"))
     base = (path.parent / m.get("base_dir", ".")).resolve()
 
@@ -211,14 +212,23 @@ def load_manifest(path: Path) -> dict:
             else:
                 video = ""
 
-            seq["output_wham_video"] = (
-                (base / video).resolve() if video else None
+            seq["out_dir"] = m["output_dir"] / seq["name"]
+
+            # output_wham_video cũng có thể là Drive File ID: giữ ID, còn đường dẫn
+            # là bản cache trong out_dir (tên theo ID). Chỉ tải khi cần ghép video
+            # (fetch_output_wham_video trong build_videos); --list không tải.
+            seq["output_wham_video_drive"] = (
+                video if is_google_drive_file_id(video) else None
             )
+            if seq["output_wham_video_drive"]:
+                seq["output_wham_video"] = seq["out_dir"] / f"output_wham_{video}.mp4"
+            else:
+                seq["output_wham_video"] = (
+                    (base / video).resolve() if video else None
+                )
 
             # Không sử dụng tên cũ trong các bước xử lý phía sau.
             seq.pop("overlay_video", None)
-
-            seq["out_dir"] = m["output_dir"] / seq["name"]
 
     return m
 
@@ -270,7 +280,9 @@ def print_status(manifest: dict):
 
             n_videos = "3 video" if has_video else "2 video"
 
-            if video is not None and not has_video:
+            if seq.get("output_wham_video_drive") and not has_video:
+                n_videos = "3 video (Drive)"       # tải khi ghép video
+            elif video is not None and not has_video:
                 n_videos += " (thiếu output)"
 
             print(
@@ -346,21 +358,45 @@ def wham_subject_table(sid, d, J) -> pd.DataFrame:
     return df
 
 
-def download_drive_file(file_id: str, destination: Path) -> Path:
-    """Tải PKL từ Google Drive công khai bằng File ID (cần cài gdown)."""
+def download_drive_file(file_id: str, destination: Path, what: str = "PKL") -> Path:
+    """Tải một tệp (mặc định PKL) từ Google Drive công khai bằng File ID (cần cài gdown)."""
     try:
         import gdown
     except ImportError as exc:
         raise RuntimeError("Thiếu thư viện gdown. Cài bằng: pip install gdown") from exc
-    print(f"  Tải PKL từ Google Drive (ID: {file_id}) ...")
+    print(f"  Tải {what} từ Google Drive (ID: {file_id}) ...")
     downloaded = gdown.download(id=file_id, output=str(destination), quiet=False)
     if not downloaded or not destination.is_file() or destination.stat().st_size == 0:
         destination.unlink(missing_ok=True)
         raise RuntimeError(
-            "Không tải được PKL. Kiểm tra File ID và quyền chia sẻ 'Anyone with the link'."
+            f"Không tải được {what}. Kiểm tra File ID và quyền chia sẻ 'Anyone with the link'."
         )
     print(f"  Đã tải {destination.stat().st_size:,} bytes.")
     return destination
+
+
+def fetch_output_wham_video(seq: dict) -> Path | None:
+    """Đường dẫn output_wham_video trên máy; nếu manifest ghi Drive ID thì tải một lần.
+
+    Video tải về được giữ trong out_dir làm cache (tên theo ID, nên đổi ID thì tải
+    bản mới). Tải lỗi không chặn việc gán nhãn: trả về đường dẫn chưa có tệp và
+    build_videos sẽ cảnh báo rồi ghép 2 video.
+    """
+    video = seq.get("output_wham_video")
+    file_id = seq.get("output_wham_video_drive")
+    if not file_id or video is None or (video.is_file() and video.stat().st_size > 0):
+        return video
+    video.parent.mkdir(parents=True, exist_ok=True)
+    print(f"  output_wham_video là Google Drive File ID -> tải về {video.name}")
+    try:
+        download_drive_file(file_id, video, what="video WHAM")
+    except Exception as exc:                 # mạng, quyền chia sẻ, thiếu gdown
+        print(f"  CẢNH BÁO: không tải được output_wham_video: {exc}")
+    finally:                                 # không để sót tệp tải dở của gdown
+        for part in video.parent.glob(video.name + "*.part"):
+            part.unlink(missing_ok=True)
+    return video
+
 
 def resolve_gt_path(seq: dict) -> dict:
     """
@@ -1244,7 +1280,7 @@ def build_videos(
     rerender: bool,
 ) -> Path:
     out = seq["out_dir"]
-    output_video = seq.get("output_wham_video")
+    output_video = fetch_output_wham_video(seq)    # tải từ Drive nếu manifest ghi ID
 
     has_output_wham_video = (
         output_video is not None and output_video.is_file()
@@ -1315,8 +1351,15 @@ def build_videos(
     )
 
     combined = out / "combined_frames.mp4"
+    # Ghi lại các video nguồn: đổi output_wham_video (ví dụ trỏ nhầm rồi sửa, hoặc vừa
+    # tải từ Drive) thì ghép lại, không dùng nhầm combined_frames.mp4 cũ.
+    sources = out / "combined_frames.sources.txt"
+    wanted = "\n".join(str(v) for v in videos)
+    same_sources = sources.is_file() and sources.read_text(encoding="utf-8") == wanted
 
-    if rerender or not combined.is_file():
+    if rerender or not combined.is_file() or not same_sources:
+        if combined.is_file() and not rerender:
+            print("  Video nguồn đã đổi so với combined_frames.mp4 cũ -> ghép lại")
         combine_videos(
             videos,
             combined,
@@ -1324,6 +1367,7 @@ def build_videos(
             n,
             has_output_wham_video,
         )
+        sources.write_text(wanted, encoding="utf-8")
 
     return combined
 
