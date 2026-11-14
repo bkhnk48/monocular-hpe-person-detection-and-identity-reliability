@@ -1,0 +1,12 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: h4d_002_hugging_cam18
+# wham_pkl: 1Ts3prW5WRYkDBb9kJMmghzE7LoZ_-MjD
+# gt: 1BLrD11N_lFZoJDIAdf1NrM4iISBiLO31
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+0 = aria02
+1 = aria01
+# 2 = (không phải người GT)
+# 7 = (không phải người GT)
+# 16 = (không phải người GT)

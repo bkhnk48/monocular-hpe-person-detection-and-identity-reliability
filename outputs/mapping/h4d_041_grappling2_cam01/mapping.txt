@@ -1,0 +1,17 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: h4d_041_grappling2_cam01
+# wham_pkl: 12qo4hl2d4BGLZ55RYrPzBaMPXr_WFq0p
+# gt: /Users/thanhnt/Documents/research/optimization_model_monocular_3/inputs/harmony4D/test_set/03_grappling2/041_grappling2/processed_data/poses3d
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+# 0 = (không phải người GT)
+7 = aria01 @ 20-25, 51-54, 58-440
+7 = aria02 @ 26-50, 55-57
+# 10 = (không phải người GT)
+13 = aria02
+# 20 = (không phải người GT)
+# 30 = (không phải người GT)
+# 37 = (không phải người GT)
+39 = aria02
+# 51 = (không phải người GT)

@@ -1,0 +1,24 @@
+# Ánh xạ WHAM body_id = người trong Ground Truth
+# sequence: h4d_010_sword2_cam20
+# wham_pkl: 1qqXJm_n3Pf3IQfN_zhybqxjlNDLGIQ1a
+# gt: 1tM4f6O36i3AUCa6aPNCwaWVufhMB5Vgq
+# 'id = người'          : cả track là người đó
+# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
+# frame không có dòng gán = không phải người GT
+0 = aria01
+1 = aria02
+# 93 = (không phải người GT)
+109 = aria02
+# 110 = (không phải người GT)
+# 112 = (không phải người GT)
+196 = aria01
+# 223 = (không phải người GT)
+224 = aria02
+225 = aria01
+249 = aria01
+296 = aria01
+# 303 = (không phải người GT)
+# 304 = (không phải người GT)
+305 = aria01
+# 308 = (không phải người GT)
+# 310 = (không phải người GT)
