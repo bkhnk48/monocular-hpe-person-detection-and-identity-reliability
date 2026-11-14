@@ -3,20 +3,22 @@
 Gán body_id của WHAM với người thật trong Ground Truth -> mapping.txt.
 
 Quy trình cho mỗi sequence trong tập được chọn (validation / test) của manifest:
-  1. Đã có mapping.txt -> bỏ qua.
-  2. pkl WHAM -> RA-WHAM.csv -> video animation WHAM (wham_anim.mp4).
-  3. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D — thư mục,
-     tệp poses3d.zip hoặc Drive File ID của zip đó —, hoặc
-     overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py)
-     -> video animation GT (gt_anim.mp4).
-     Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py.
-  4. Có output_wham_video (video WHAM đã render sẵn trên video gốc)
-     -> ghép 3 video theo thứ tự:
-        wham_anim.mp4 | output_wham_video | gt_anim.mp4
-     Không có -> ghép 2 video:
-        wham_anim.mp4 | gt_anim.mp4
-  5. Mở video ghép, hỏi từng body_id thuộc người GT nào, ghi mapping.txt.
-     body_id không được gán = không phải người GT.
+1. Đã có mapping.txt -> bỏ qua.
+2. Kiểm tra output_wham_video trước tiên: nếu rỗng hoặc thiếu file -> hỏi skip ngay
+   (tránh phải tải PKL / GT / render animation rồi mới bấm q).
+3. pkl WHAM -> RA-WHAM.csv -> video animation WHAM (wham_anim.mp4).
+4. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D — thư mục,
+   tệp poses3d.zip hoặc Drive File ID của zip đó —, hoặc
+   overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py)
+   -> video animation GT (gt_anim.mp4).
+   Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py.
+5. Có output_wham_video (video WHAM đã render sẵn trên video gốc)
+   -> ghép 3 video theo thứ tự:
+      wham_anim.mp4 | output_wham_video | gt_anim.mp4
+   Không có (nhưng người dùng vẫn chọn tiếp tục) -> ghép 2 video:
+      wham_anim.mp4 | gt_anim.mp4
+6. Mở video ghép, hỏi từng body_id thuộc người GT nào, ghi mapping.txt.
+   body_id không được gán = không phải người GT.
 
 Các video animation đánh số theo frame của video gốc (frame không có detection
 vẫn được giữ), nên 2-3 video luôn chạy khớp nhau.
@@ -88,13 +90,12 @@ OVERLAY_CSV_JOINTS_12 = LIMBS
 MPI_ANNOT2_TO_SHARED_12 = [
     MPI_IDX[j] for j in LIMBS
 ]
-# [9, 14, 10, 15, 11, 16, 18, 23, 19, 24, 20, 25]
 
 # Harmony4D poses2d: SMPL 45-joint layout.
 H4D_45_TO_SHARED_12 = [
     WHAM_SMPL_IDX[j] for j in LIMBS
 ]
-# [16, 17, 18, 19, 20, 21, 1, 2, 4, 5, 7, 8]
+
 
 def make_skeleton(joints, extra_bones=()):
     """Khung xương = tên khớp + cặp chỉ số xương."""
@@ -187,9 +188,6 @@ def load_manifest(path: Path) -> dict:
                         f"chỉ được hỗ trợ cho GT dạng CSV hoặc harmony4d "
                         f"(poses3d.zip), không phải '{gt_type}'."
                     )
-
-                # Giữ nguyên File ID trong manifest.
-                # Đường dẫn file tải về sẽ được xác định khi xử lý sequence.
             else:
                 seq["gt"]["path"] = (base / gt_source).resolve()
 
@@ -223,8 +221,7 @@ def load_manifest(path: Path) -> dict:
             seq["out_dir"] = m["output_dir"] / seq["name"]
 
             # output_wham_video cũng có thể là Drive File ID: giữ ID, còn đường dẫn
-            # là bản cache trong out_dir (tên theo ID). Chỉ tải khi cần ghép video
-            # (fetch_output_wham_video trong build_videos); --list không tải.
+            # là bản cache trong out_dir (tên theo ID).
             seq["output_wham_video_drive"] = (
                 video if is_google_drive_file_id(video) else None
             )
@@ -251,7 +248,6 @@ def sequence_status(seq: dict) -> str:
     gt = seq["gt"]
 
     if gt.get("path_is_drive"):
-        # File ID được xem là nguồn GT sẵn sàng tải.
         pass
     elif not gt["path"].exists():
         return "THIẾU GT"
@@ -286,12 +282,12 @@ def print_status(manifest: dict):
             video = seq.get("output_wham_video")
             has_video = video is not None and video.is_file()
 
-            n_videos = "3 video" if has_video else "2 video"
+            n_videos = "3 video" if has_video else "2 video (thiếu output)"
 
             if seq.get("output_wham_video_drive") and not has_video:
-                n_videos = "3 video (Drive)"       # tải khi ghép video
-            elif video is not None and not has_video:
-                n_videos += " (thiếu output)"
+                n_videos = "3 video (Drive)"
+            elif video is None:
+                n_videos = "2 video (rỗng output)"
 
             print(
                 f"  {seq['name']:<{name_width}} "
@@ -387,8 +383,7 @@ def fetch_output_wham_video(seq: dict) -> Path | None:
     """Đường dẫn output_wham_video trên máy; nếu manifest ghi Drive ID thì tải một lần.
 
     Video tải về được giữ trong out_dir làm cache (tên theo ID, nên đổi ID thì tải
-    bản mới). Tải lỗi không chặn việc gán nhãn: trả về đường dẫn chưa có tệp và
-    build_videos sẽ cảnh báo rồi ghép 2 video.
+    bản mới).
     """
     video = seq.get("output_wham_video")
     file_id = seq.get("output_wham_video_drive")
@@ -404,6 +399,70 @@ def fetch_output_wham_video(seq: dict) -> Path | None:
         for part in video.parent.glob(video.name + "*.part"):
             part.unlink(missing_ok=True)
     return video
+
+
+def ask_missing_video_action(seq: dict, reason: str) -> str:
+    """Hỏi người dùng khi sequence thiếu hoặc rỗng output_wham_video ngay từ đầu.
+
+    Trả về:
+      "skip_sequence" : bỏ qua sequence hiện tại (mặc định khi nhấn Enter/y/q)
+      "continue"      : vẫn chạy tiếp với 2 video (wham_anim | gt_anim)
+      "quit_program"  : thoát hẳn chương trình (Q)
+    """
+    print(f"\n  [CẢNH BÁO] Sequence '{seq['name']}' {reason}.")
+    print("  Bạn có muốn bỏ qua (skip) sequence này không?")
+    print("    y / Enter / q : Bỏ qua sequence này (mặc định)")
+    print("    n / c         : Vẫn tiếp tục xử lý (chỉ ghép 2 video: WHAM anim | GT anim)")
+    print("    Q             : Thoát hẳn chương trình")
+    while True:
+        try:
+            ans = input("  Lựa chọn [Y/n/Q]: ").strip()
+        except EOFError:
+            return "quit_program"
+
+        if ans == "Q":
+            return "quit_program"
+        if ans.lower() in ("", "y", "yes", "s", "skip", "q"):
+            return "skip_sequence"
+        if ans.lower() in ("n", "no", "c", "continue", "k", "ko"):
+            return "continue"
+        print("  Chỉ nhập y (skip), n/c (tiếp tục 2 video), hoặc Q (thoát).")
+
+
+def ensure_output_wham_video(seq: dict) -> tuple[Path | None, str]:
+    """Kiểm tra (và tải nếu là Drive ID) output_wham_video TRƯỚC khi tải PKL/GT.
+
+    Trả về: (đường_dẫn_video_hợp_lệ_hoặc_None, trạng_thái_điều_hướng)
+    Trạng thái điều hướng: "ok" | "skip_sequence" | "quit_program"
+    """
+    video = seq.get("output_wham_video")
+    file_id = seq.get("output_wham_video_drive")
+
+    # Trường hợp 1: Trường output_wham_video bị rỗng / không khai báo trong manifest
+    if video is None and not file_id:
+        action = ask_missing_video_action(
+            seq, "không khai báo 'output_wham_video' (trường rỗng)"
+        )
+        return None, ("ok" if action == "continue" else action)
+
+    # Trường hợp 2: Khai báo Google Drive File ID -> thử kiểm tra cache hoặc tải ngay
+    if file_id:
+        fetched = fetch_output_wham_video(seq)
+        if fetched is not None and fetched.is_file() and fetched.stat().st_size > 0:
+            return fetched, "ok"
+        action = ask_missing_video_action(
+            seq, f"không tải được 'output_wham_video' từ Google Drive (ID: {file_id})"
+        )
+        return None, ("ok" if action == "continue" else action)
+
+    # Trường hợp 3: Đường dẫn cục bộ -> kiểm tra file tồn tại trước khi làm việc khác
+    if video.is_file() and video.stat().st_size > 0:
+        return video, "ok"
+
+    action = ask_missing_video_action(
+        seq, f"thiếu file 'output_wham_video' tại:\n    {video}"
+    )
+    return None, ("ok" if action == "continue" else action)
 
 
 def h4d_npy_dir(root: Path) -> Path | None:
@@ -424,11 +483,7 @@ def cached_h4d_gt(cache_dir: Path, source: str) -> Path | None:
 
 
 def extract_h4d_gt_zip(zip_path: Path, cache_dir: Path, source: str) -> Path:
-    """Giải nén zip poses3d vào cache_dir rồi trả về thư mục chứa *.npy.
-
-    Giải nén vào thư mục tạm, kiểm tra có .npy, ghi dấu nguồn rồi mới đổi tên:
-    bị ngắt hay zip hỏng thì không để lại bản giải nén dở bị dùng nhầm lần sau.
-    """
+    """Giải nén zip poses3d vào cache_dir rồi trả về thư mục chứa *.npy."""
     tmp = cache_dir.with_name(cache_dir.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     try:
@@ -450,11 +505,7 @@ def extract_h4d_gt_zip(zip_path: Path, cache_dir: Path, source: str) -> Path:
 
 def resolve_h4d_gt_zip(seq: dict, gt: dict) -> Path:
     """GT harmony4d dạng poses3d.zip (Drive File ID hoặc tệp .zip trên máy): giải nén
-    một lần vào out_dir (gt_<ID>/ hoặc gt_<tên zip>/), trả về thư mục chứa *.npy.
-
-    Dùng lại bản đã giải nén nếu cùng nguồn (cùng ID; zip trên máy: cùng đường dẫn,
-    kích thước, thời điểm sửa). Zip tải từ Drive bị xoá sau khi giải nén.
-    """
+    một lần vào out_dir (gt_<ID>/ hoặc gt_<tên zip>/), trả về thư mục chứa *.npy."""
     out_dir, is_drive = seq["out_dir"], gt.get("path_is_drive", False)
     if is_drive:
         file_id = str(gt["path"])
@@ -479,25 +530,14 @@ def resolve_h4d_gt_zip(seq: dict, gt: dict) -> Path:
         download_drive_file(file_id, zip_path, what="GT poses3d.zip")
         print(f"  Giải nén GT -> {cache_dir.name}/")
         return extract_h4d_gt_zip(zip_path, cache_dir, source)
-    finally:                                 # bỏ zip đã tải và tệp tải dở của gdown
+    finally:
         zip_path.unlink(missing_ok=True)
         for part in out_dir.glob(zip_path.name + "*.part"):
             part.unlink(missing_ok=True)
 
 
 def resolve_gt_path(seq: dict) -> dict:
-    """
-    Chuẩn bị Ground Truth để xử lý.
-
-    - GT local: giữ nguyên đường dẫn (harmony4d: thư mục poses3d).
-    - harmony4d là tệp .zip hoặc Drive File ID của poses3d.zip: giải nén một lần
-      vào thư mục output của sequence (resolve_h4d_gt_zip).
-    - GT CSV trên Google Drive: tải về thư mục output của sequence.
-    - Cache được định danh bằng File ID, tránh dùng nhầm file khi manifest đổi ID.
-
-    Trả về bản sao cấu hình GT, trong đó path luôn là Path local.
-    Không thay đổi File ID gốc trong seq.
-    """
+    """Chuẩn bị Ground Truth để xử lý."""
     gt = dict(seq["gt"])
 
     if gt["type"] == "harmony4d" and (
@@ -526,10 +566,11 @@ def resolve_gt_path(seq: dict) -> dict:
         print(f"  Dùng lại GT CSV: {cache_path.name}")
     else:
         print(f"  Tải Ground Truth từ Google Drive: {file_id}")
-        download_drive_file(file_id, cache_path)
+        download_drive_file(file_id, cache_path, what="GT CSV")
 
     gt["path"] = cache_path
     return gt
+
 
 def wham_pkl_to_csv(pkl: Path, smpl: Path, out_csv: Path) -> pd.DataFrame:
     if out_csv.is_file():
@@ -571,12 +612,7 @@ def load_wham_csv(seq: dict, smpl: Path) -> pd.DataFrame:
 
 
 def wham_pkl_to_2d(pkl: Path, smpl: Path, image_size) -> pd.DataFrame:
-    """12 khớp SMPL của mọi detection WHAM chiếu lên ảnh: frame, body_id, <khớp>_u/_v (px).
-
-    Dùng đúng camera mà WHAM giả định: f = hypot(W, H), điểm chính ở tâm ảnh. `verts`
-    trong pkl nằm sẵn trong hệ camera đó (khác hệ world của RA-WHAM.csv), nên chiếu thẳng.
-    Cột frame lấy từ frame_ids, cùng quy ước với cột frame_id của RA-WHAM.csv.
-    """
+    """12 khớp SMPL của mọi detection WHAM chiếu lên ảnh: frame, body_id, <khớp>_u/_v (px)."""
     W, H = (float(x) for x in image_size)
     f = float(np.hypot(W, H))
     J = load_j_regressor(smpl)
@@ -606,12 +642,7 @@ def wham_pkl_to_2d(pkl: Path, smpl: Path, image_size) -> pd.DataFrame:
 
 
 def load_wham_2d(seq: dict, smpl: Path) -> pd.DataFrame:
-    """Đọc out_dir/WHAM-2D.csv; chưa có thì tạo từ pkl (pkl Drive được tải lại một lần).
-
-    RA-WHAM.csv không có toạ độ ảnh, còn pkl tải từ Drive đã bị xoá sau khi chuyển
-    đổi, nên lần đầu mỗi sequence phải tải lại pkl. Cần khoá "image_size": [W, H]
-    trong manifest = kích thước video mà WHAM đã chạy.
-    """
+    """Đọc out_dir/WHAM-2D.csv; chưa có thì tạo từ pkl (pkl Drive được tải lại một lần)."""
     out = seq["out_dir"] / "WHAM-2D.csv"
     if out.is_file():
         return pd.read_csv(out)
@@ -628,7 +659,7 @@ def load_wham_2d(seq: dict, smpl: Path) -> pd.DataFrame:
         try:
             download_drive_file(seq["wham_pkl"], temp_pkl)
             df = wham_pkl_to_2d(temp_pkl, smpl, size)
-        finally:                       # kể cả khi lỗi hay Ctrl+C: không để sót pkl / .part
+        finally:
             temp_pkl.unlink(missing_ok=True)
             for part in temp_pkl.parent.glob(temp_pkl.name + "*.part"):
                 part.unlink(missing_ok=True)
@@ -670,13 +701,7 @@ def mpi_gt_poses(mat: Path, camera: int, person: str) -> dict:
 
 
 def overlay_gt_poses(meta_path: Path) -> dict:
-    """Video ghép của scripts/make_overlay_pair.py: 2 người MPI, frame nguồn theo overlay_frames.csv.
-
-    Thu nhỏ người trong ảnh không đổi pose 3D (PA-MPJPE bất biến tỉ lệ), nên dùng annot3 gốc.
-    CHỈ dùng cho phép đo hình dạng pose (PA-MPJPE). Mỗi người ở hệ camera của video nguồn
-    riêng, nên KHÔNG dùng để tính vị trí gốc hay khoảng cách giữa hai người trong cảnh:
-    việc đó dùng gt_3d_scene.csv (scripts/make_overlay_pair.py, export_gt).
-    """
+    """Video ghép của scripts/make_overlay_pair.py: 2 người MPI, frame nguồn theo overlay_frames.csv."""
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
     base = meta_path.parent
     frames = pd.read_csv(base / meta["frames_csv"])
@@ -740,30 +765,9 @@ def load_gt(gt: dict) -> tuple[dict, str]:
 def gt_names(poses: dict) -> list[str]:
     return sorted({p for people in poses.values() for p in people})
 
+
 def overlay_csv_gt_poses(csv_path: Path) -> dict:
-    """
-    Đọc Ground Truth 3D từ gt_3d_scene.csv của MPI overlay.
-
-    Cấu trúc:
-        frame, person, src_frame,
-        pelvis_x, pelvis_y, pelvis_z,
-        neck_x, neck_y, neck_z, ...
-
-    Mỗi dòng tương ứng với một người tại một frame composite.
-
-    Trả về:
-        {
-            frame: {
-                person: np.ndarray(shape=(14, 3))
-            }
-        }
-
-    Lưu ý:
-        - Dùng cột frame để đồng bộ với video composite.
-        - src_frame chỉ là metadata của video nguồn.
-        - Giữ nguyên tọa độ scene, không trừ pelvis.
-        - Trả về đơn vị m.
-    """
+    """Đọc Ground Truth 3D từ gt_3d_scene.csv của MPI overlay."""
     if not csv_path.is_file():
         raise FileNotFoundError(
             f"Không tìm thấy GT CSV: {csv_path}"
@@ -778,7 +782,6 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
 
     df.columns = df.columns.str.strip()
 
-    # Kiểm tra các cột bắt buộc.
     required = {"frame", "person", "src_frame"}
 
     for joint in OVERLAY_CSV_JOINTS:
@@ -796,7 +799,6 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
     if df.empty:
         raise ValueError(f"GT CSV rỗng: {csv_path}")
 
-    # Chuẩn hóa frame.
     df["frame"] = pd.to_numeric(
         df["frame"], errors="raise"
     ).astype(int)
@@ -804,7 +806,6 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
     if df["frame"].lt(0).any():
         raise ValueError("GT CSV có frame âm.")
 
-    # Chuẩn hóa tên người.
     if df["person"].isna().any():
         raise ValueError("GT CSV có dòng không có person.")
 
@@ -813,7 +814,6 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
     if df["person"].eq("").any():
         raise ValueError("GT CSV có person rỗng.")
 
-    # Một người chỉ có một pose trong một frame.
     duplicated = df.duplicated(
         subset=["frame", "person"],
         keep=False,
@@ -829,7 +829,6 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
             f"{examples.to_string(index=False)}"
         )
 
-    # Chuyển các cột tọa độ sang số.
     coord_cols = [
         f"{joint}_{axis}"
         for joint in OVERLAY_CSV_JOINTS
@@ -858,11 +857,9 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
             dtype=np.float64,
         )
 
-        # Bỏ qua pose không có tọa độ hợp lệ.
         if not np.isfinite(pts).any():
             continue
 
-        # CSV lưu mm; chuẩn hóa về mét như mpi_gt_poses và h4d_gt_poses.
         poses.setdefault(frame, {})[person] = pts / 1000.0
 
     if not poses:
@@ -884,22 +881,17 @@ def overlay_csv_gt_poses(csv_path: Path) -> dict:
         f"{len(people)} người"
     )
     print(f"  Người: {', '.join(people)}")
-    print(
-        f"  Frame: {min(poses)} - {max(poses)}"
-    )
+    print(f"  Frame: {min(poses)} - {max(poses)}")
 
     return poses
+
 # ============================================================
 # 5. VẼ ANIMATION (OpenCV, nhanh hơn matplotlib nhiều lần)
 # ============================================================
 
 
 def up_rotation(poses: dict, skel: dict) -> np.ndarray:
-    """
-    Ma trận xoay đưa hướng vai - mắt cá trung bình về trục +z.
-
-    Bỏ qua các pose không đủ dữ liệu hợp lệ để xác định hướng đứng.
-    """
+    """Ma trận xoay đưa hướng vai - mắt cá trung bình về trục +z."""
     vecs = []
 
     for people in poses.values():
@@ -1082,15 +1074,7 @@ def combine_videos(
     n_frames: int,
     has_output_wham_video: bool,
 ):
-    """
-    Ghép ngang 2 hoặc 3 video theo đúng số frame.
-
-    Khi có output_wham_video:
-        WHAM animation | WHAM output video | GT animation
-
-    Khi không có:
-        WHAM animation | GT animation
-    """
+    """Ghép ngang 2 hoặc 3 video theo đúng số frame."""
     caps = [cv2.VideoCapture(str(v)) for v in videos]
 
     widths = [panel_width(c) for c in caps]
@@ -1111,7 +1095,6 @@ def combine_videos(
     for f in range(n_frames):
         panels = read_panels(caps, widths, last)
 
-        # Video output WHAM nằm ở panel thứ hai (index 1).
         if has_output_wham_video:
             stamp(panels[1], f"frame {f}", (16, 40))
 
@@ -1160,10 +1143,6 @@ def open_video(path: Path):
 # ============================================================
 # 7. CÚ PHÁP GÁN NHÃN THEO FRAME
 # ============================================================
-#   1                     cả track là người số 1
-#   x  (hoặc Enter)       cả track không phải người GT
-#   1, 2@121-125 140      mặc định người 1; frame 121-125 và 140 là người 2
-#   [0-2]->2, [3-11]->1   liệt kê từng đoạn (dạng ->, = hoặc : đều được)
 
 NOT_PERSON = ""
 RANGE_RE = re.compile(r"^\[?\s*(\d+)\s*(?:-\s*(\d+))?\s*\]?$")
@@ -1282,7 +1261,7 @@ def print_mapping_help(summary: pd.DataFrame, names: list[str]):
     print("    x  (hoặc Enter)         cả track không phải người GT")
     print("    1, 2@121-125 140        mặc định người 1; frame 121-125 và 140 là người 2")
     print("    [0-2]->2, [3-11]->1     liệt kê từng đoạn frame")
-    print("  Lệnh: v = mở lại video, b = quay lại, q = thoát không lưu")
+    print("  Lệnh: v = mở lại video, b = quay lại, q = bỏ qua sequence, Q = thoát chương trình")
 
 
 def show_segments(labels: dict):
@@ -1293,9 +1272,14 @@ def show_segments(labels: dict):
 
 
 def ask_one(bid, track: np.ndarray, names: list[str]):
-    """Hỏi 1 body_id. Trả về {frame: người} hoặc lệnh 'v'/'b'/'q'."""
+    """Hỏi 1 body_id. Trả về mapping hoặc lệnh v/b/q/Q."""
     raw = input(f"  body_id {bid} [{track[0]}-{track[-1]}] -> ").strip()
-    if raw.lower() in ("v", "b", "q"):
+
+    if raw == "q":
+        return "skip_sequence"
+    if raw == "Q":
+        return "quit_program"
+    if raw.lower() in ("v", "b"):
         return raw.lower()
     try:
         labels = resolve_labels(track, *parse_assignment(raw, names))
@@ -1313,15 +1297,16 @@ def ask_one(bid, track: np.ndarray, names: list[str]):
 
 
 def ask_mapping(tracks: dict, names: list[str], video: Path):
-    """Hỏi lần lượt từng body_id. Trả về {body_id: {frame: người}}, None nếu thoát."""
+    """Hỏi lần lượt từng body_id."""
     ids, mapping, i = list(tracks), {}, 0
     while i < len(ids):
         try:
             ans = ask_one(ids[i], tracks[ids[i]], names)
         except EOFError:
-            return None
-        if ans == "q":
-            return None
+            return "quit_program"
+
+        if ans in ("skip_sequence", "quit_program"):
+            return ans
         if ans == "v":
             open_video(video)
         elif ans == "b":
@@ -1373,20 +1358,12 @@ def build_videos(
     gt: dict,
     gt_skel: str,
     rerender: bool,
+    output_video: Path | None,
 ) -> Path:
     out = seq["out_dir"]
-    output_video = fetch_output_wham_video(seq)    # tải từ Drive nếu manifest ghi ID
-
     has_output_wham_video = (
         output_video is not None and output_video.is_file()
     )
-
-    if output_video is not None and not has_output_wham_video:
-        print(
-            f"  CẢNH BÁO: Không tìm thấy output_wham_video:\n"
-            f"  {output_video}\n"
-            "  Sẽ chỉ ghép WHAM animation và GT animation."
-        )
 
     # Nếu có video WHAM output thì lấy FPS từ video đó.
     fps = (
@@ -1415,7 +1392,6 @@ def build_videos(
         ),
     ]
 
-    # Tạo hoặc sử dụng lại hai animation.
     for path, poses, skel, title in targets:
         if rerender or not path.is_file():
             render_animation(
@@ -1429,10 +1405,6 @@ def build_videos(
         else:
             print(f"  Dùng lại {path.name}")
 
-    # Thứ tự panel:
-    # 1. WHAM animation
-    # 2. output_wham_video (nếu có)
-    # 3. Ground Truth animation
     videos = [targets[0][0]]
 
     if has_output_wham_video:
@@ -1446,8 +1418,6 @@ def build_videos(
     )
 
     combined = out / "combined_frames.mp4"
-    # Ghi lại các video nguồn: đổi output_wham_video (ví dụ trỏ nhầm rồi sửa, hoặc vừa
-    # tải từ Drive) thì ghép lại, không dùng nhầm combined_frames.mp4 cũ.
     sources = out / "combined_frames.sources.txt"
     wanted = "\n".join(str(v) for v in videos)
     same_sources = sources.is_file() and sources.read_text(encoding="utf-8") == wanted
@@ -1472,12 +1442,17 @@ def track_frames(wham_df: pd.DataFrame) -> dict:
             for b, g in wham_df.groupby("body_id")}
 
 
-def process_sequence(seq: dict, manifest: dict, args) -> bool:
-    """Trả về False nếu người dùng chọn thoát."""
+def process_sequence(seq: dict, manifest: dict, args):
+    """Xử lý một sequence.
+
+    Trả về True khi hoàn tất/bỏ qua bình thường,
+    "skip_sequence" khi người dùng chọn skip hoặc nhấn q,
+    "quit_program" khi người dùng nhấn Q.
+    """
     if seq.get("skip") is True:
         print(f"\n[SKIP] {seq['name']} (skip=true trong manifest)")
         return True
-    
+
     print(f"\n{'=' * 64}\n{seq['name']}\n{'=' * 64}")
     if (seq["out_dir"] / "mapping.txt").is_file() and not args.force:
         print(f"  Đã có {seq['out_dir'] / 'mapping.txt'} -> bỏ qua (--force để gán lại).")
@@ -1486,6 +1461,15 @@ def process_sequence(seq: dict, manifest: dict, args) -> bool:
     if status.startswith("THIẾU"):
         print(f"  {status} -> bỏ qua.")
         return True
+
+    # KIỂM TRA NGAY output_wham_video trước khi tải PKL hay GT
+    output_video, nav = ensure_output_wham_video(seq)
+    if nav == "skip_sequence":
+        print(f"  -> Đã bỏ qua sequence '{seq['name']}' (do thiếu output_wham_video).")
+        return "skip_sequence"
+    if nav == "quit_program":
+        return "quit_program"
+
     seq["out_dir"].mkdir(parents=True, exist_ok=True)
     wham_df = load_wham_csv(seq, manifest["smpl_model"])
     print("  Chuẩn bị Ground Truth ...")
@@ -1493,14 +1477,23 @@ def process_sequence(seq: dict, manifest: dict, args) -> bool:
 
     print("  Đọc Ground Truth ...")
     gt, gt_skel = load_gt(gt_config)
-    video = build_videos(seq, wham_df, gt, gt_skel, args.rerender)
+    video = build_videos(seq, wham_df, gt, gt_skel, args.rerender, output_video)
     if not args.no_open:
         open_video(video)
     names = gt_names(gt)
     print_mapping_help(body_id_summary(wham_df), names)
     mapping = ask_mapping(track_frames(wham_df), names, video)
-    if mapping is None:
-        return False
+
+    if mapping == "skip_sequence":
+        print(
+            f"  Đã bỏ qua sequence '{seq['name']}'. "
+            "Không lưu mapping; sẽ tiếp tục sequence tiếp theo."
+        )
+        return "skip_sequence"
+
+    if mapping == "quit_program":
+        return "quit_program"
+
     write_mapping(seq["out_dir"], mapping, seq)
     return True
 
@@ -1528,9 +1521,15 @@ def main():
     seqs = [s for s in manifest.get(split, []) if not args.only or s["name"] == args.only]
     print(f"\nTập {split}: {len(seqs)} sequence")
     for seq in seqs:
-        if not process_sequence(seq, manifest, args):
-            print("\nĐã thoát. Các mapping đã lưu vẫn giữ nguyên.")
+        result = process_sequence(seq, manifest, args)
+
+        if result == "quit_program":
+            print("\nĐã thoát chương trình theo lệnh Q. Các mapping đã lưu vẫn giữ nguyên.")
             return
+
+        if result == "skip_sequence":
+            continue
+
     print("\nXong.")
     print_status(manifest)
 
