@@ -5,12 +5,11 @@
 # 'id = người'          : cả track là người đó
 # 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
 # frame không có dòng gán = không phải người GT
-1 = aria02 @ 0-2, 12-14
-1 = aria01 @ 3-11, 15
-# 1 = (không phải người GT) @ 16-40
+# 1 = (không phải người GT)
 # 2 = (không phải người GT)
 # 3 = (không phải người GT)
-8 = aria01
+8 = aria01 @ 16-28, 47-130
+8 = aria02 @ 29-46
 # 12 = (không phải người GT)
 24 = aria02
 # 27 = (không phải người GT)
