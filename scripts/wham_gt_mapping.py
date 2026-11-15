@@ -8,10 +8,12 @@ Quy trình cho mỗi sequence trong tập được chọn (validation / test) c�
    (tránh phải tải PKL / GT / render animation rồi mới bấm q).
 3. pkl WHAM -> RA-WHAM.csv -> video animation WHAM (wham_anim.mp4).
 4. Ground Truth (annot.mat của MPI-INF-3DHP, poses3d/*.npy của Harmony4D — thư mục,
-   tệp poses3d.zip hoặc Drive File ID của zip đó —, hoặc
-   overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py)
+   tệp poses3d.zip hoặc Drive File ID của zip đó —,
+   overlay_meta.json của video ghép 2 người từ scripts/make_overlay_pair.py, hoặc
+   gt.type = "csv": gt_3d.csv / gt_3d_scene.csv của video ghép, CSV một người)
    -> video animation GT (gt_anim.mp4).
-   Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py.
+   Video ghép có thể gán nhãn tự động bằng scripts/overlay_autolabel.py, hoặc gợi ý
+   + gán tay không cần video bằng scripts/match_wham_subjects_to_gt.py.
 5. Có output_wham_video (video WHAM đã render sẵn trên video gốc)
    -> ghép 3 video theo thứ tự:
       wham_anim.mp4 | output_wham_video | gt_anim.mp4
@@ -762,6 +764,39 @@ def h4d_gt_poses(poses_dir: Path) -> dict:
     return poses
 
 
+def csv_gt_poses(path: Path, person: str = "GT") -> dict:
+    """GT dạng CSV (mm) -> {frame: {người: (13, 3) mét}}, khớp theo thứ tự MPI_IDX.
+
+    Hai dạng:
+      - nhiều người: cột frame, person, <khớp>_x/_y/_z. Đây là gt_3d.csv hoặc gt_3d_scene.csv
+        của scripts/make_overlay_pair.py; hai tệp cùng hình dạng pose (scene chỉ tịnh tiến
+        nguyên khối) nên PA-MPJPE như nhau.
+      - một người: cột frame, <khớp>_x/_y/_z, không có cột person (CSV cũ xuất từ annot.mat);
+        tên người lấy từ tham số person.
+    Dòng có khớp NaN bị bỏ qua (frame đó không có người này).
+    """
+    path = Path(path)
+    df = pd.read_csv(path, encoding="utf-8-sig")
+    cols = [f"{j}_{a}" for j in MPI_IDX for a in "xyz"]
+    missing = [c for c in ["frame", *cols] if c not in df.columns]
+    if missing:
+        raise ValueError(f"{path.name} thiếu cột: {', '.join(missing[:6])}"
+                         + (" ..." if len(missing) > 6 else ""))
+    names = (df["person"].astype(str) if "person" in df.columns
+             else pd.Series(person, index=df.index)).to_numpy()
+    pts = df[cols].to_numpy(float).reshape(len(df), len(MPI_IDX), 3) / 1000.0
+    ok = np.isfinite(pts).all(axis=(1, 2)) & df["frame"].notna().to_numpy()
+    poses: dict = {}
+    for f, who, p in zip(df["frame"].to_numpy()[ok].astype(int), names[ok], pts[ok]):
+        people = poses.setdefault(int(f), {})
+        if who in people:
+            raise ValueError(f"{path.name}: frame {f} có hai dòng cho '{who}'")
+        people[who] = p
+    if not poses:
+        raise ValueError(f"{path.name}: không có dòng GT hợp lệ")
+    return poses
+
+
 def load_gt(gt: dict) -> tuple[dict, str]:
     if gt["type"] == "mpi":
         return (
@@ -790,6 +825,9 @@ def load_gt(gt: dict) -> tuple[dict, str]:
             overlay_csv_gt_poses(gt["path"]),
             "mpi_overlay_csv",
         )
+
+    if gt["type"] == "csv":
+        return csv_gt_poses(gt["path"], str(gt.get("person", "GT"))), "mpi13"
 
     raise ValueError(
         f"gt.type không hỗ trợ: {gt['type']}"
@@ -1357,6 +1395,8 @@ ARROW_RE = re.compile(r"^\[?\s*(\d+)\s*(?:-\s*(\d+))?\s*\]?\s*(?:->|=>|=|:)\s*(\
 
 def parse_person(tok: str, names: list[str]) -> str:
     tok = tok.strip()
+    if tok and tok in names:            # tên thật trước: người tên "X" không bị hiểu là 'x'
+        return tok
     if tok.lower() in ("x", "-", "0", "none", ""):
         return NOT_PERSON
     if tok.isdigit() and 1 <= int(tok) <= len(names):
@@ -1536,11 +1576,43 @@ def mapping_lines(bid, labels: dict) -> list[str]:
     return lines
 
 
-def write_mapping(out_dir: Path, mapping: dict, seq: dict):
+def read_mapping(path: Path, tracks: dict, names: list[str]) -> dict:
+    """Đọc mapping.txt (định dạng write_mapping, có thể đã sửa tay) -> {body_id: {frame: người}}.
+
+    tracks: {body_id: mảng frame của track}. Dòng/đoạn sau '#' bị bỏ qua; body_id hoặc frame
+    không có dòng gán = không phải người GT. Báo lỗi nếu body_id không có trong WHAM, tên
+    người lạ, đoạn frame ngoài track hoặc một frame bị gán hai người.
+    """
+    specs: dict = {}
+    for n, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        bid, sep, spec = line.partition("=")
+        if not sep or not re.fullmatch(r"-?\d+", bid.strip()):
+            raise ValueError(f"{Path(path).name}:{n}: dòng không hợp lệ '{raw.strip()}'")
+        specs.setdefault(int(bid), []).append(spec.strip())
+    unknown = sorted(set(specs) - set(tracks))
+    if unknown:
+        raise ValueError(f"{Path(path).name}: body_id {unknown} không có trong WHAM")
+    mapping = {}
+    for bid, track in tracks.items():
+        try:
+            default, rules = parse_assignment(", ".join(specs.get(bid, [])), names)
+            mapping[bid] = resolve_labels(track, NOT_PERSON if default is None else default,
+                                          rules)
+        except ValueError as e:
+            raise ValueError(f"{Path(path).name}: body_id {bid}: {e}") from e
+    return mapping
+
+
+def write_mapping(out_dir: Path, mapping: dict, seq: dict, notes=()):
+    """notes: các dòng ghi chú thêm vào đầu mapping.txt (không cần '#')."""
     lines = ["# Ánh xạ WHAM body_id = người trong Ground Truth",
              f"# sequence: {seq['name']}",
              f"# wham_pkl: {seq['wham_pkl']}",
              f"# gt: {seq['gt']['path']}",
+             *(f"# {n}" for n in notes),
              "# 'id = người'          : cả track là người đó",
              "# 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)",
              "# frame không có dòng gán = không phải người GT"]

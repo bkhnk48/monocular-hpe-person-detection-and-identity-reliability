@@ -2,7 +2,7 @@
   "_ghi_chu": [
     "Manifest các sequence cho chương trình scripts/wham_gt_mapping.py.",
     "Đường dẫn tương đối tính từ base_dir; base_dir tương đối tính từ thư mục chứa file này.",
-    "gt.type = 'mpi' (annot.mat, 1 người) hoặc 'harmony4d' (thư mục poses3d/*.npy).",
+    "gt.type = 'mpi' (annot.mat, 1 người), 'harmony4d' (thư mục poses3d/*.npy, poses3d.zip hoặc Drive File ID của zip), 'mpi_overlay' (overlay_meta.json), 'mpi_overlay_csv' (gt_3d_scene.csv, đường dẫn hoặc Drive File ID) hoặc 'csv' (gt_3d.csv / gt_3d_scene.csv; CSV 1 người thêm \"person\").",
     "output_wham_video: video WHAM vẽ đè lên video gốc (output_*.mp4), đường dẫn hoặc Drive File ID (tải một lần vào thư mục output của sequence). Bỏ trống nếu không có -> ghép 2 video.",
     "fps chỉ dùng khi không có output_wham_video; nếu có thì lấy fps của video đó để 3 video khớp frame.",
     "image_size: [W, H] của video WHAM đã chạy; cần khi eta > 0 (chiếu WHAM lên ảnh, tạo WHAM-2D.csv).",
