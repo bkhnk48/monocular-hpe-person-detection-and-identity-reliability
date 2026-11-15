@@ -6,7 +6,20 @@ from typing import Any
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from pose_assoc.costs import MIN_VALID_JOINTS, displacement_2d
 from pose_assoc.solvers.single_mcf import shortest_paths
+
+# ω: bán kính cửa sổ majority vote của B5, tính bằng frame (cửa sổ dài 2ω + 1).
+# Chọn trên validation cho từng bộ tham số (README mục 7): round 9 -> 20, round 7 -> 160.
+# Mặc định theo round 9; bộ tham số khác thì truyền --vote-window của compare.
+VOTE_WINDOW = 20
+
+# B5' (B5 không dùng body_id): τ = ngưỡng độ dịch 2D để nối hai detection ở hai frame
+# liên tiếp (cùng đơn vị với C_V: RMS độ dịch khớp / cỡ người, chia dt^p);
+# ω' = bán kính cửa sổ vote dọc chuỗi đã nối. Chọn trên validation (README mục 7):
+# round 9 -> τ = 1.0, ω' = 20; round 7 -> τ = 0.3, ω' = 320. Mặc định theo round 9.
+LINK_THRESHOLD = 1.0
+LINK_WINDOW = 20
 
 
 def _get(obj: Any, key: str, default=None):
@@ -237,6 +250,206 @@ def hungarian_per_frame(net):
                     assignment[(frame, person)] = node_id
 
     return assignment
+
+
+def _vote_key(label):
+    """Thứ tự cố định khi hoà phiếu: người trước None, rồi theo tên."""
+    return (label is None, str(label))
+
+
+def majority_vote_labels(labels: dict, window: int) -> dict:
+    """
+    Làm mượt nhãn của detection theo thời gian, dọc theo body_id của WHAM.
+
+    labels: {(frame, body_id): người hoặc None}. Mỗi detection (t, d) lấy nhãn
+    chiếm đa số trong các detection cùng body_id d ở frame t' với |t' - t| <= window,
+    kể cả chính nó. None (không thuộc người GT nào) cũng là một nhãn được bỏ phiếu.
+    Khoảng cách tính theo số frame, không theo số lần body_id xuất hiện.
+
+    Hoà phiếu thì giữ nhãn cũ của (t, d) nếu nó nằm trong nhóm hoà; nếu không thì
+    lấy theo _vote_key. window = 0 trả lại đúng labels.
+    """
+    window = int(window)
+    if window < 0:
+        raise ValueError(f"window phải >= 0, nhận {window}")
+
+    frames_of = defaultdict(list)
+    for frame, body_id in labels:
+        frames_of[body_id].append(frame)
+
+    smoothed = {}
+    for body_id, frames in frames_of.items():
+        frames.sort()
+        counter = Counter()
+        lo = hi = 0
+        for frame in frames:
+            while hi < len(frames) and frames[hi] <= frame + window:
+                counter[labels[(frames[hi], body_id)]] += 1
+                hi += 1
+            while frames[lo] < frame - window:
+                counter[labels[(frames[lo], body_id)]] -= 1
+                lo += 1
+            best = max(counter.values())
+            tied = [label for label, count in counter.items() if count == best]
+            own = labels[(frame, body_id)]
+            smoothed[(frame, body_id)] = (
+                own if own in tied else min(tied, key=_vote_key)
+            )
+    return smoothed
+
+
+def _detections(net) -> list:
+    """Mọi detection (frame, body_id) có nút trong mạng, không lặp."""
+    seen = {}
+    for node in net.nodes:
+        if _get(node, "kind") in ("det", "detection"):
+            seen[(int(_get(node, "frame")), _get(node, "body_id"))] = True
+    return list(seen)
+
+
+def link_distance(uv_a, uv_b) -> float:
+    """Độ dịch 2D giữa hai detection cho bộ nối của B5' (như displacement_2d).
+
+    NaN nếu thiếu toạ độ hoặc có ít hơn MIN_VALID_JOINTS khớp chung. displacement_2d
+    trả 0 trong trường hợp đó (C_V coi là không có bằng chứng), còn ở đây 0 lại là
+    "nối chắc chắn", nên phải tách ra.
+    """
+    if uv_a is None or uv_b is None:
+        return float("nan")
+    uv_a, uv_b = np.asarray(uv_a, float), np.asarray(uv_b, float)
+    valid = np.isfinite(uv_a).all(1) & np.isfinite(uv_b).all(1)
+    if valid.sum() < MIN_VALID_JOINTS:
+        return float("nan")
+    return displacement_2d(uv_a, uv_b)
+
+
+def link_tracks_2d(detections, det_uv: dict, threshold: float = LINK_THRESHOLD,
+                   gap_power: float = 1.0) -> dict:
+    """
+    Nối detection thành chuỗi chỉ bằng vị trí 2D, không dùng body_id của WHAM.
+
+    detections: các (frame, body_id); body_id chỉ là khoá để tra toạ độ.
+    det_uv: {(frame, body_id): (12, 2) px}, như load_positions().
+
+    Mỗi frame có detection được ghép với frame có detection liền trước bằng Hungarian
+    trên link_distance / dt^gap_power (cùng cách chia dt với C_V). Ghép tối đa số
+    cặp hợp lệ, rồi tổng độ dịch nhỏ nhất; chỉ giữ cặp có giá trị <= threshold
+    (threshold = inf: nối mọi cặp có toạ độ). Detection không được nối mở chuỗi mới.
+
+    Trả {(frame, body_id): mã chuỗi}. Trong một frame mỗi chuỗi có tối đa một detection.
+    """
+    if not threshold >= 0:
+        raise ValueError(f"threshold phải >= 0, nhận {threshold}")
+
+    by_frame = defaultdict(list)
+    for frame, body_id in detections:
+        by_frame[int(frame)].append(body_id)
+
+    track_of = {}
+    next_track = 0
+    prev_frame = None
+    for frame in sorted(by_frame):
+        cur = sorted(set(by_frame[frame]), key=str)
+        linked = {}
+        if prev_frame is not None:
+            prev = sorted(set(by_frame[prev_frame]), key=str)
+            gap = max(frame - prev_frame, 1)
+            cost = np.full((len(prev), len(cur)), np.inf)
+            for i, a in enumerate(prev):
+                for j, b in enumerate(cur):
+                    d = link_distance(det_uv.get((prev_frame, a)), det_uv.get((frame, b)))
+                    if np.isfinite(d):
+                        cost[i, j] = d / gap ** gap_power
+            ok = np.isfinite(cost) & (cost <= threshold)
+            if ok.any():
+                # Cặp không hợp lệ mang chi phí rất lớn: Hungarian ghép nhiều cặp hợp lệ
+                # nhất trước, rồi mới xét tổng độ dịch; cặp không hợp lệ bị bỏ sau đó.
+                rows, cols = linear_sum_assignment(np.where(ok, cost, 1e9))
+                for r, c in zip(rows, cols):
+                    if ok[r, c]:
+                        linked[cur[c]] = track_of[(prev_frame, prev[r])]
+        for body_id in cur:
+            if body_id in linked:
+                track_of[(frame, body_id)] = linked[body_id]
+            else:
+                track_of[(frame, body_id)] = next_track
+                next_track += 1
+        prev_frame = frame
+    return track_of
+
+
+def _vote_along_tracks(net, track_of: dict, window: int):
+    """
+    B2 rồi majority vote nhãn dọc theo chuỗi detection (dùng chung cho B5 và B5').
+
+    1. Chạy B2. Mỗi detection (t, d) nhận nhãn là người được gán nó, hoặc None.
+    2. Làm mượt nhãn dọc theo track_of[(t, d)] trong cửa sổ ±window frame
+       (majority_vote_labels).
+    3. Ở mỗi (frame, người), chọn detection có nhãn mới là người đó; nếu nhiều thì
+       lấy chi phí nút thấp nhất; nếu không có thì missed.
+
+    Mỗi detection chỉ có một nhãn nên không bị hai người dùng chung.
+    """
+    base = hungarian_per_frame(net)
+    groups, _, _, assignment = _empty_assignment(net)
+    id_to_node = {_node_id(node, i): node for i, node in enumerate(net.nodes)}
+
+    labels = {}
+    for (frame, _person), group in groups.items():
+        for _, node in group["det"]:
+            labels.setdefault((frame, _get(node, "body_id")), None)
+    for (frame, person), node_id in base.items():
+        if node_id is not None:
+            node = id_to_node[int(node_id)]
+            labels[(frame, _get(node, "body_id"))] = person
+
+    track_labels = {(frame, track_of[(frame, body_id)]): label
+                    for (frame, body_id), label in labels.items()}
+    if len(track_labels) != len(labels):
+        raise ValueError("track_of gán hai detection của cùng một frame vào một chuỗi")
+    smoothed_tracks = majority_vote_labels(track_labels, window)
+    smoothed = {(frame, body_id): smoothed_tracks[(frame, track_of[(frame, body_id)])]
+                for frame, body_id in labels}
+
+    for (frame, person), group in groups.items():
+        candidates = [
+            item for item in group["det"]
+            if smoothed.get((frame, _get(item[1], "body_id"))) == person
+        ]
+        if candidates:
+            best = min(
+                candidates,
+                key=lambda item: (_det_cost(net, item), str(_get(item[1], "body_id"))),
+            )
+            assignment[(frame, person)] = _node_id(best[1], best[0])
+
+    return assignment
+
+
+def hungarian_majority_vote(net, window: int = VOTE_WINDOW):
+    """
+    B5 (A3 trong docs/MCMCF_revised.docx): B2 + majority vote dọc body_id của WHAM
+    trong ±window frame (_vote_along_tracks).
+
+    Khác B4, B5 dùng body_id của WHAM để nối detection giữa các frame (như B6), và
+    làm theo phiếu bầu dù chi phí detection có cao hơn chi phí missed.
+    """
+    track_of = {key: key[1] for key in _detections(net)}
+    return _vote_along_tracks(net, track_of, window)
+
+
+def hungarian_vote_2d_tracks(net, det_uv: dict, window: int = LINK_WINDOW,
+                             threshold: float = LINK_THRESHOLD, gap_power: float = 1.0):
+    """
+    B5': như B5 nhưng không dùng body_id của WHAM. Chuỗi detection được nối bằng
+    độ dịch 2D (link_tracks_2d, cùng đại lượng với C_V của B4), rồi vote dọc chuỗi
+    trong ±window frame.
+
+    So với B4 ở round có eta > 0, B5' và B4 dùng cùng bằng chứng (PA-MPJPE, C_2D nếu
+    có, độ dịch 2D); chỉ khác ở chỗ vote cục bộ thay cho tối ưu toàn cục.
+    """
+    track_of = link_tracks_2d(_detections(net), det_uv, threshold, gap_power)
+    return _vote_along_tracks(net, track_of, window)
 
 
 def independent_dp(net):

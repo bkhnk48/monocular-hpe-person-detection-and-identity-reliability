@@ -41,7 +41,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import cv2
 import joblib
@@ -190,6 +190,13 @@ def load_manifest(path: Path) -> dict:
                     )
             else:
                 seq["gt"]["path"] = (base / gt_source).resolve()
+
+            # GT 2D cho C_2D (tuỳ chọn, resolve_gt_2d): đường dẫn hoặc Drive File ID.
+            path_2d = seq["gt"].get("path_2d")
+            if path_2d:
+                seq["gt"]["path_2d_is_drive"] = is_google_drive_file_id(path_2d)
+                if not seq["gt"]["path_2d_is_drive"]:
+                    seq["gt"]["path_2d"] = (base / path_2d).resolve()
 
             # Tên mới: output_wham_video.
             # Tên cũ overlay_video chỉ được giữ để tương thích manifest cũ.
@@ -715,13 +722,40 @@ def overlay_gt_poses(meta_path: Path) -> dict:
     return poses
 
 
+H4D_FRAME_FILE = re.compile(r"^(\d+)\.npy$")
+
+
+def h4d_frame_files(folder: Path, what: str) -> dict:
+    """{frame: tệp} của một thư mục Harmony4D, frame lấy từ số trong tên (00001.npy = frame 0).
+
+    Tệp tên lạ (ví dụ 00194(1).npy do tải lên Drive bị nhân bản) bị bỏ qua; thiếu frame thì
+    in cảnh báo. Không đếm theo thứ tự tệp, để thiếu một tệp không làm lệch mọi frame sau nó.
+    """
+    files, odd = {}, []
+    for f in sorted(Path(folder).glob("*.npy")):
+        m = H4D_FRAME_FILE.match(f.name)
+        if m:
+            files[int(m.group(1)) - 1] = f
+        else:
+            odd.append(f.name)
+    if odd:
+        more = "…" if len(odd) > 3 else ""
+        print(f"  ! {what}: bỏ qua {len(odd)} tệp tên lạ ({', '.join(odd[:3])}{more})")
+    if files:
+        missing = max(files) + 1 - len(files)
+        if missing:
+            print(f"  ! {what}: thiếu {missing} frame trong 0..{max(files)} "
+                  "(frame thiếu coi như không có GT)")
+    return files
+
+
 def h4d_gt_poses(poses_dir: Path) -> dict:
-    """poses3d/00001.npy ... : {tên người: (17, >=3)}; file thứ i = frame i."""
-    files = sorted(poses_dir.glob("*.npy"))
+    """poses3d/00001.npy ... : {tên người: (17, >=3)}; tệp 00001.npy = frame 0 (h4d_frame_files)."""
+    files = h4d_frame_files(poses_dir, f"GT 3D {Path(poses_dir).name}")
     if not files:
         raise FileNotFoundError(f"Không có .npy trong {poses_dir}")
     poses = {}
-    for i, f in enumerate(files):
+    for i, f in sorted(files.items()):
         d = np.load(f, allow_pickle=True).item()
         poses[i] = {str(k): np.asarray(v, float)[:17, :3] for k, v in d.items()
                     if np.asarray(v).shape[0] >= 17}
@@ -760,6 +794,178 @@ def load_gt(gt: dict) -> tuple[dict, str]:
     raise ValueError(
         f"gt.type không hỗ trợ: {gt['type']}"
     )
+
+
+# ============================================================
+# 4b. GROUND TRUTH 2D TRÊN ẢNH (C_2D)
+# ============================================================
+
+
+def h4d_camera(seq: dict) -> str | None:
+    """Camera của sequence: gt.camera, hoặc đuôi _camXX của tên (h4d_041_grappling2_cam07)."""
+    cam = seq["gt"].get("camera")
+    if cam is not None:
+        return str(cam)
+    m = re.search(r"_(cam\d+)$", seq["name"])
+    return m.group(1) if m else None
+
+
+def h4d_2d_dir(root: Path, camera: str | None) -> Path:
+    """Thư mục *.npy của đúng camera trong poses2d: chính root, hoặc thư mục con tên camera."""
+    dirs = sorted({f.parent for f in root.rglob("*.npy") if "__MACOSX" not in f.parts})
+    if not dirs:
+        raise FileNotFoundError(f"Không có .npy trong {root}")
+    named = [d for d in dirs if d.name == camera]
+    if len(named) == 1:
+        return named[0]
+    if len(dirs) == 1:
+        d = dirs[0]
+        if camera and re.fullmatch(r"cam\d+", d.name) and d.name != camera:
+            raise ValueError(f"GT 2D {d} là của {d.name}, nhưng sequence là {camera}")
+        return d
+    raise ValueError(f"{root} có {len(dirs)} thư mục .npy ({', '.join(d.name for d in dirs)}), "
+                     f"không có camera '{camera}' (ghi gt.camera hoặc trỏ gt.path_2d thẳng "
+                     "vào thư mục camXX)")
+
+
+def extract_gt_2d_zip_camera(zip_path: Path, cache_dir: Path, source: str,
+                             camera: str | None) -> Path:
+    """Giải nén zip poses2d vào cache_dir. Zip của cả scene (poses2d/camXX/*.npy, như
+    notebook harmony4d_drive_index_colab.ipynb tạo) thì chỉ lấy thư mục của camera, để
+    mỗi sequence không phải giữ bản sao của mọi camera."""
+    tmp = cache_dir.with_name(cache_dir.name + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                names = [n for n in zf.namelist()
+                         if n.endswith(".npy") and not n.startswith("__MACOSX/")]
+                dirs = sorted({PurePosixPath(n).parent.name for n in names})
+                if camera and camera in dirs:
+                    names = [n for n in names if PurePosixPath(n).parent.name == camera]
+                elif camera and len(dirs) > 1:
+                    raise ValueError(
+                        f"GT 2D {zip_path.name} không có thư mục {camera}, chỉ có "
+                        f"{len(dirs)} thư mục: {', '.join(dirs)}. Zip trên Drive có thể bị "
+                        "nén từ thư mục poses2d tải lên thiếu; kiểm lại rồi tạo lại zip.")
+                zf.extractall(tmp, names)
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"GT 2D không phải tệp zip hợp lệ: {zip_path}") from exc
+        if not names:
+            raise ValueError(f"Không có tệp .npy nào trong {zip_path.name}")
+        (tmp / H4D_GT_MARKER).write_text(source, encoding="utf-8")
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        tmp.rename(cache_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return cache_dir
+
+
+def fetch_gt_2d_drive(seq: dict, file_id: str) -> Path:
+    """GT 2D trên Drive (CSV, hoặc zip của poses2d): tải một lần vào out_dir thành
+    gt2d_<id>.csv hoặc thư mục gt2d_<id>/ (chỉ camera của sequence, có tệp đánh dấu nguồn)."""
+    out_dir = seq["out_dir"]
+    csv, cache_dir = out_dir / f"gt2d_{file_id}.csv", out_dir / f"gt2d_{file_id}"
+    camera = h4d_camera(seq)
+    source = f"drive:{file_id}|{camera}"
+    if csv.is_file() and csv.stat().st_size > 0:
+        print(f"  Dùng lại GT 2D: {csv.name}")
+        return csv
+    if cached_h4d_gt(cache_dir, source) is not None:
+        print(f"  Dùng lại GT 2D đã giải nén: {cache_dir.name}/")
+        return cache_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp = out_dir / f"gt2d_{file_id}.download"
+    try:
+        download_drive_file(file_id, tmp, what="GT 2D")
+        if zipfile.is_zipfile(tmp):
+            print(f"  Giải nén GT 2D ({camera}) -> {cache_dir.name}/")
+            return extract_gt_2d_zip_camera(tmp, cache_dir, source, camera)
+        tmp.replace(csv)
+        return csv
+    finally:
+        tmp.unlink(missing_ok=True)
+        for part in out_dir.glob(tmp.name + "*.part"):
+            part.unlink(missing_ok=True)
+
+
+def extract_gt_2d_zip(seq: dict, zip_path: Path) -> Path:
+    """Tệp .zip của poses2d trên máy: giải nén một lần (chỉ camera của sequence)
+    vào out_dir/gt2d_<tên zip>/."""
+    st = zip_path.stat()
+    camera = h4d_camera(seq)
+    cache_dir = seq["out_dir"] / f"gt2d_{zip_path.stem}"
+    source = f"local:{zip_path.resolve()}|{st.st_size}|{st.st_mtime_ns}|{camera}"
+    if cached_h4d_gt(cache_dir, source) is None:
+        seq["out_dir"].mkdir(parents=True, exist_ok=True)
+        print(f"  Giải nén GT 2D {zip_path.name} ({camera}) -> {cache_dir.name}/")
+        extract_gt_2d_zip_camera(zip_path, cache_dir, source, camera)
+    return cache_dir
+
+
+def resolve_gt_2d(seq: dict) -> dict | None:
+    """Nguồn GT 2D trên ảnh của video WHAM (cho C_2D); None nếu sequence chưa có.
+
+      gt.path_2d (mọi loại GT, ưu tiên nếu có):
+        - tệp CSV có cột frame, person, <khớp>_u, <khớp>_v của 12 khớp LIMBS
+          (ví dụ gt_2d.csv của video ghép; cột thừa bị bỏ qua)
+        - thư mục poses2d của harmony4d (chứa camXX/ hoặc chính camXX/; mỗi tệp
+          {người: (45, 2)} khớp SMPL), hoặc tệp .zip của nó
+        - Drive File ID của CSV hoặc zip đó (tải một lần vào out_dir)
+      không có gt.path_2d:
+        - mpi          : annot2 trong chính annot.mat (gt.path, gt.camera)
+        - mpi_overlay  : gt_2d.csv cạnh overlay_meta.json
+    Trả về {"kind": "csv" | "npy" | "mpi", "path": Path, ...}.
+    """
+    gt = seq["gt"]
+    if gt.get("path_2d"):
+        if gt.get("path_2d_is_drive"):
+            path = fetch_gt_2d_drive(seq, str(gt["path_2d"]))
+        else:
+            path = Path(gt["path_2d"])
+            if not path.exists():
+                raise FileNotFoundError(f"Không thấy GT 2D (gt.path_2d): {path}")
+            if path.suffix.lower() == ".zip":
+                path = extract_gt_2d_zip(seq, path)
+        if path.is_dir():
+            return {"kind": "npy", "path": h4d_2d_dir(path, h4d_camera(seq))}
+        return {"kind": "csv", "path": path}
+    if gt["type"] == "mpi":
+        return {"kind": "mpi", "path": Path(gt["path"]), "camera": int(gt["camera"]),
+                "person": str(gt["person"])}
+    if gt["type"] == "mpi_overlay":
+        path = Path(gt["path"]).parent / "gt_2d.csv"
+        return {"kind": "csv", "path": path} if path.is_file() else None
+    return None
+
+
+def load_gt_2d(src: dict) -> dict:
+    """{frame: {người: (12, 2) px}} theo thứ tự LIMBS, từ nguồn của resolve_gt_2d()."""
+    if src["kind"] == "mpi":
+        data = loadmat(src["path"], squeeze_me=True, struct_as_record=False)
+        ann = np.asarray(data["annot2"][src["camera"]], dtype=float)
+        ann = ann.reshape(len(ann), -1, 2)[:, MPI_ANNOT2_TO_SHARED_12]
+        return {f: {src["person"]: ann[f]} for f in range(len(ann)) if np.isfinite(ann[f]).any()}
+    if src["kind"] == "npy":
+        poses = {}
+        # 00001.npy = frame 0, cùng quy ước với poses3d (h4d_gt_poses, h4d_frame_files)
+        files = h4d_frame_files(Path(src["path"]), f"GT 2D {Path(src['path']).name}")
+        for i, f in sorted(files.items()):
+            d = np.load(f, allow_pickle=True).item()
+            poses[i] = {str(k): np.asarray(v, float)[H4D_45_TO_SHARED_12, :2]
+                        for k, v in d.items()
+                        if np.ndim(v) == 2 and np.shape(v)[0] >= 24}
+        return poses
+    df = pd.read_csv(src["path"], encoding="utf-8-sig")
+    cols = [f"{j}_{a}" for j in LIMBS for a in "uv"]
+    missing = sorted({"frame", "person", *cols} - set(df.columns))
+    if missing:
+        raise ValueError(f"GT 2D CSV {src['path']} thiếu cột: {', '.join(missing)}")
+    pts = df[cols].to_numpy(float).reshape(len(df), len(LIMBS), 2)
+    poses: dict = {}
+    for f, person, uv in zip(df["frame"].astype(int), df["person"].astype(str), pts):
+        poses.setdefault(int(f), {})[person] = uv
+    return poses
 
 
 def gt_names(poses: dict) -> list[str]:

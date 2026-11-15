@@ -6,9 +6,9 @@
       "mapping_sig": "2f498fa3c81bcad6",
       "gt_signature": "d610d389bef83431",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 1,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1xvacdsfs4Ap98PP72TvJGaREnUQ4Wkco": {
       "name": "mpi_S8_Seq1_cam8",
@@ -16,9 +16,9 @@
       "mapping_sig": "f45ad1f7a157d11a",
       "gt_signature": "d610d389bef83431",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 1,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1AkjHAIGhlvjHKjsZ9OVHpOurK26PoB8-": {
       "name": "mpi_S8_Seq1_cam7",
@@ -26,9 +26,9 @@
       "mapping_sig": "cc2bd38c44d646c7",
       "gt_signature": "d610d389bef83431",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 2,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1np-o_9zSccQQOiOwXTckGawirZjqDQxV": {
       "name": "mpi_S8_Seq1_cam6",
@@ -36,9 +36,9 @@
       "mapping_sig": "29944445daa07b3e",
       "gt_signature": "d610d389bef83431",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 2,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1CSBmSMopCow0wGBkNuSyPymyzQsLYfB_": {
       "name": "mpi_S1_Seq1_cam8",
@@ -46,9 +46,9 @@
       "mapping_sig": "a08a86098704ffd5",
       "gt_signature": "44ccbaf608268a54",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 3,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1bHV4zbKYRuZNYaW6zGwBSVXJKqnGaCbx": {
       "name": "mpi_S1_Seq1_cam1",
@@ -56,9 +56,9 @@
       "mapping_sig": "c9d3ac555a374d2a",
       "gt_signature": "44ccbaf608268a54",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 3,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1_WUtbszaKVeeSbc2tJGdiXB5f7UVEDdP": {
       "name": "mpi_S1_Seq1_cam0",
@@ -66,9 +66,9 @@
       "mapping_sig": "efedacc61db2b978",
       "gt_signature": "44ccbaf608268a54",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 3,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:1WwAgFP1vU8C40UutRvgS2CrF-59D1hQ1": {
       "name": "mpi_S8_Seq1_cam4",
@@ -76,29 +76,29 @@
       "mapping_sig": "fad4a36f7b66f713",
       "gt_signature": "d610d389bef83431",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 3,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:16Yna92FAfKzE7UmzDQi5QCTRogE7s_RK": {
       "name": "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
       "gt": "10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF",
       "mapping_sig": "55b94a2280bf8183",
-      "gt_signature": "mpi_overlay_csv:drive:10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF",
+      "gt_signature": "mpi_overlay_csv:drive:10i8Nkl4ueu5MMrkYBMy9mCNC7rEwuaSF|2d:9d07b0cd5ac282ca",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 5,
-      "updated_round": 7
+      "updated_round": 8
     },
     "drive:14XX7J8YbPLkFKRYRQebH3oYtCw6mMudA": {
       "name": "mpi_S8c0f1500_S8c0f2750_s0.5_cam0",
       "gt": "1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-",
       "mapping_sig": "54fd29834e88c82f",
-      "gt_signature": "mpi_overlay_csv:drive:1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-",
+      "gt_signature": "mpi_overlay_csv:drive:1kf7PLO9T6bzdOKN8_1nP7XmHTnHQkoA-|2d:584bc857fd254d73",
       "excluded": false,
-      "net_version": 2,
+      "net_version": 3,
       "added_round": 5,
-      "updated_round": 7
+      "updated_round": 8
     }
   },
   "rounds": [
@@ -314,6 +314,156 @@
       },
       "score": 0.9689486945900555,
       "file": "configs/tuning/round_7.yaml"
+    },
+    {
+      "round": 8,
+      "date": "2026-11-15T10:30:02",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 1.5,
+        "gamma": 0.0,
+        "c_fp": 5.0,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0,
+        "eta": 0.0,
+        "disp_scale": 0.05,
+        "beta": 0.25,
+        "reproj_scale": 0.05
+      },
+      "score": 0.9967230055658629,
+      "file": "configs/tuning/round_8.yaml"
+    },
+    {
+      "round": 9,
+      "date": "2026-11-15T10:42:29",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 1.0,
+        "gamma": 0.0,
+        "c_fp": 7.0,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0,
+        "eta": 0.0,
+        "disp_scale": 0.05,
+        "beta": 0.5,
+        "reproj_scale": 0.05
+      },
+      "score": 0.9983917748917748,
+      "file": "configs/tuning/round_9.yaml"
+    },
+    {
+      "round": 10,
+      "date": "2026-11-15T20:51:48",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 2.0,
+        "gamma": 0.0,
+        "c_fp": 2.5,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0,
+        "eta": 0.1,
+        "disp_scale": 0.05,
+        "beta": 0.0,
+        "reproj_scale": 0.05,
+        "mu": 0.0
+      },
+      "score": 0.9760439945282124,
+      "file": "configs/tuning/round_10.yaml"
+    },
+    {
+      "round": 11,
+      "date": "2026-11-15T20:52:29",
+      "sequences": [
+        "mpi_S8_Seq1_cam0",
+        "mpi_S8_Seq1_cam8",
+        "mpi_S8_Seq1_cam7",
+        "mpi_S8_Seq1_cam6",
+        "mpi_S1_Seq1_cam8",
+        "mpi_S1_Seq1_cam1",
+        "mpi_S1_Seq1_cam0",
+        "mpi_S8_Seq1_cam4",
+        "mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0",
+        "mpi_S8c0f1500_S8c0f2750_s0.5_cam0"
+      ],
+      "params": {
+        "alpha": 1.0,
+        "gamma": 0.0,
+        "c_fp": 7.0,
+        "c_fn": 1.0,
+        "c_disappear": 0.15,
+        "c_reappear": 0.2,
+        "pose_scale_mm": 100.0,
+        "motion_scale_m": 0.05,
+        "gap_power": 1.0,
+        "start_detected": 0.0,
+        "start_missed": 0.0,
+        "end_detected": 0.0,
+        "end_missed": 0.0,
+        "eta": 0.0,
+        "disp_scale": 0.05,
+        "beta": 0.5,
+        "reproj_scale": 0.05,
+        "mu": 0.0
+      },
+      "score": 0.9988917748917748,
+      "file": "configs/tuning/round_11.yaml"
     }
   ]
 }

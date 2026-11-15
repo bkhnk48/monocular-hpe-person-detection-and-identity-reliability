@@ -5,10 +5,13 @@ Ký hiệu (đặt tên theo configs/default.yaml, mục association):
   alpha  = weights.pose          trọng số chi phí pose (unary)
   gamma  = weights.temporal      trọng số chi phí chuyển động giữa 2 frame
   eta    = weights.displacement  trọng số C_V: độ dịch 2D giữa 2 detection liên tiếp
+  beta   = weights.reprojection  trọng số C_2D: sai số 2D giữa detection và người GT trên ảnh
+  mu     = weights.id_switch     C_ID: phạt khi một người đi từ body_id này sang body_id khác
+                                 giữa 2 detection liên tiếp (dùng ID tracker của WHAM)
   C_FP, C_FN, C_disappear, C_reappear, chi phí biên
 
 Chi phí unary của nút "detection d gán cho người k ở frame t":
-    alpha * PA-MPJPE(d, k) / pose_scale  -  C_FP
+    alpha * PA-MPJPE(d, k) / pose_scale  +  beta * E_2D(d, k) / s_2D  -  C_FP
 (trừ C_FP vì một detection được dùng thì không còn là false positive; hằng số
  C_FP * tổng số detection được cộng lại khi báo cáo hàm mục tiêu.)
 
@@ -45,6 +48,9 @@ class CostParams:
     end_missed: float = 0.0
     eta: float = 0.0            # weights.displacement (C_V; 0 = tắt)
     disp_scale: float = 0.05    # s_V: độ dịch 2D tính theo cỡ người trên ảnh
+    beta: float = 0.0           # weights.reprojection (C_2D; 0 = tắt)
+    reproj_scale: float = 0.05  # s_2D: sai số 2D so với GT, tính theo cỡ người GT trên ảnh
+    mu: float = 0.0             # weights.id_switch (C_ID; 0 = tắt, không dùng body_id)
 
     @classmethod
     def from_config(cls, assoc: dict) -> "CostParams":
@@ -58,7 +64,9 @@ class CostParams:
                    start_detected=b.get("start_detected", 0.0),
                    start_missed=b.get("start_missed", 0.0),
                    end_detected=b.get("end_detected", 0.0), end_missed=b.get("end_missed", 0.0),
-                   eta=w.get("displacement", 0.0), disp_scale=s.get("displacement", 0.05))
+                   eta=w.get("displacement", 0.0), disp_scale=s.get("displacement", 0.05),
+                   beta=w.get("reprojection", 0.0), reproj_scale=s.get("reprojection", 0.05),
+                   mu=w.get("id_switch", 0.0))
 
 
 def procrustes(pred: np.ndarray, gt: np.ndarray):
@@ -137,3 +145,36 @@ def displacement_cost(disp, p: CostParams, gap=1):
     """C_V = eta * độ dịch / (s_V * dt^gap_power), chia dt giống motion_cost."""
     gap = np.maximum(np.asarray(gap, float), 1.0)
     return p.eta * np.asarray(disp, float) / (p.disp_scale * gap ** p.gap_power)
+
+
+def id_switch_cost(switch, p: CostParams):
+    """C_ID = mu * [body_id(a) != body_id(b)] cho cung Detected -> Detected.
+
+    switch: True ở cung mà hai detection khác body_id (network.arc_id_switch).
+    Một lần đổi body_id là một sự kiện (như C_disappear), nên không chia theo dt.
+    Không dùng GT: body_id là ID tracker của WHAM, là đầu vào chứ không phải nhãn.
+    """
+    return p.mu * np.asarray(switch, float)
+
+
+def reprojection_error_2d(uv_det, uv_gt) -> float:
+    """E_2D: trung bình khoảng cách các khớp (px) giữa detection và người GT trên ảnh,
+    chia cho cỡ người GT (person_scale_2d), nên không phụ thuộc độ phân giải video.
+
+    Dùng GT (như PA-MPJPE). NaN nếu thiếu toạ độ hoặc ít hơn 8 khớp hợp lệ ở cả hai;
+    reprojection_cost() coi NaN là không có bằng chứng (chi phí 0).
+    """
+    if uv_det is None or uv_gt is None:
+        return float("nan")
+    uv_det, uv_gt = np.asarray(uv_det, float), np.asarray(uv_gt, float)
+    valid = np.isfinite(uv_det).all(1) & np.isfinite(uv_gt).all(1)
+    if valid.sum() < MIN_VALID_JOINTS:
+        return float("nan")
+    dist = np.linalg.norm(uv_det[valid] - uv_gt[valid], axis=1)
+    return float(dist.mean() / person_scale_2d(uv_gt))
+
+
+def reprojection_cost(err, p: CostParams):
+    """C_2D = beta * E_2D / s_2D; E_2D = NaN (không đủ khớp, thiếu GT 2D) -> 0."""
+    err = np.nan_to_num(np.asarray(err, float), nan=0.0)
+    return p.beta * err / p.reproj_scale

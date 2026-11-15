@@ -11,7 +11,8 @@ Ràng buộc nối các luồng: mỗi detection (t, d) chỉ thuộc tối đa 
 Số luồng K = số người trong GT.
 
 Mạng lưu ĐẠI LƯỢNG THÔ (PA-MPJPE của nút, rms chuyển động của cung, loại cung,
-và độ dịch 2D của cung nếu đã gọi attach_positions()).
+độ dịch 2D của cung nếu đã gọi attach_positions(), sai số 2D so với GT của nút
+detection nếu đã gọi attach_gt_2d()). C_ID (đổi body_id) tính thẳng từ body_id của nút.
 Chi phí là hàm tuyến tính của các hệ số, nên đổi hệ số chỉ cần gọi apply_params()
 mà không phải dựng lại mạng (dùng cho pose_assoc.tune).
 """
@@ -24,7 +25,8 @@ import numpy as np
 import pandas as pd
 
 from .costs import (CostParams, detection_cost, displacement_2d, displacement_cost,
-                    motion_cost, motion_rms, procrustes)
+                    id_switch_cost, motion_cost, motion_rms, procrustes, reprojection_cost,
+                    reprojection_error_2d)
 
 # Loại cung chi tiết (arc_sub) -> loại chung (arc_kind)
 SUB_TO_KIND = {"dd": "move", "dm": "move", "md": "move", "mm": "move",
@@ -43,6 +45,8 @@ class Network:
     arc_gap: list[int] = field(default_factory=list)     # dt (frame gốc) của cung move
     # độ dịch 2D (C_V), chỉ khác 0 ở cung "dd"; rỗng = chưa gọi attach_positions()
     arc_disp: list[float] = field(default_factory=list)
+    # True sau attach_gt_2d(): nút detection có "e2d" (C_2D); mạng cũ trong cache không có
+    has_gt_2d: bool = False
     arc_cost: np.ndarray = None
     node_costs: np.ndarray = None
     n_detections: int = 0
@@ -77,6 +81,10 @@ def apply_params(net: Network, p: CostParams) -> Network:
     kind = np.array([n["kind"] for n in net.nodes])
     pa = np.array([n["pa_mm"] for n in net.nodes], float)
     det_cost = np.array([detection_cost(x / 1000.0, p) for x in np.nan_to_num(pa)])
+    # C_2D: chỉ có khi đã gắn attach_gt_2d(); chưa gắn (kể cả lúc build_network tự gọi
+    # apply_params ở cuối) thì bỏ qua như C_V. tune chặn quét beta trên cache chưa gắn.
+    if p.beta and has_gt_2d(net):
+        det_cost = det_cost + reprojection_cost(node_e2d(net), p)
     net.node_costs = np.where(kind == "det", det_cost, np.where(kind == "miss", p.c_fn, 0.0))
     fixed = {"dm": p.c_disappear, "md": p.c_reappear, "mm": 0.0, "empty": 0.0,
              "start_det": p.start_detected, "start_miss": p.start_missed,
@@ -94,7 +102,55 @@ def apply_params(net: Network, p: CostParams) -> Network:
         if len(disp) != len(sub):
             raise ValueError(f"arc_disp có {len(disp)} phần tử nhưng mạng có {len(sub)} cung")
         net.arc_cost[dd] += displacement_cost(disp[dd], p, gap[dd])
+    # C_ID: tính từ body_id có sẵn trên nút, nên mạng cũ trong cache cũng dùng được
+    if p.mu:
+        net.arc_cost += id_switch_cost(arc_id_switch(net), p)
     net.constant = p.c_fp * net.n_detections
+    return net
+
+
+def arc_id_switch(net: Network) -> np.ndarray:
+    """True ở cung Detected -> Detected mà hai detection khác body_id (C_ID).
+
+    Cung qua trạng thái missed (dm, md) không mang body_id nên không bị tính: đi
+    det(body A) -> miss -> det(body B) không bị phạt C_ID.
+    """
+    body = np.array([n["body_id"] for n in net.nodes])
+    tails, heads = np.asarray(net.tails, int), np.asarray(net.heads, int)
+    return (np.asarray(net.arc_sub) == "dd") & (body[tails] != body[heads])
+
+
+def has_gt_2d(net: Network) -> bool:
+    """Đã gắn sai số 2D so với GT (attach_gt_2d) chưa; mạng cũ trong cache thì chưa."""
+    return bool(net.__dict__.get("has_gt_2d", False))
+
+
+def node_e2d(net: Network) -> np.ndarray:
+    """E_2D của mọi nút (NaN với nút không phải detection hoặc thiếu GT 2D)."""
+    return np.array([n.get("e2d", np.nan) for n in net.nodes], float)
+
+
+def attach_gt_2d(net: Network, det_uv: dict, gt_uv: dict) -> Network:
+    """Gắn sai số 2D thô E_2D cho mọi nút detection (C_2D).
+
+    det_uv: {(frame, body_id): (12, 2) px} (WHAM-2D.csv);
+    gt_uv:  {(frame, người): (12, 2) px} (GT 2D trên ảnh của cùng video), thứ tự khớp LIMBS.
+    Gọi apply_params() lại sau đó thì C_2D mới vào chi phí. Báo lỗi nếu không nút
+    detection nào tính được E_2D (thường do tên người hoặc số frame của GT 2D không khớp).
+    """
+    n_det = n_ok = 0
+    for n in net.nodes:
+        if n["kind"] != "det":
+            continue
+        n["e2d"] = reprojection_error_2d(det_uv.get((n["frame"], n["body_id"])),
+                                         gt_uv.get((n["frame"], n["person"])))
+        n_det += 1
+        n_ok += bool(np.isfinite(n["e2d"]))
+    if n_det and not n_ok:
+        raise ValueError("GT 2D không khớp nút detection nào: kiểm tra tên người "
+                         f"({', '.join(net.persons)}) và số frame của GT 2D")
+    net.has_gt_2d = True
+    net.gt_2d_coverage = (n_ok, n_det)
     return net
 
 
@@ -123,12 +179,13 @@ def attach_positions(net: Network, det_uv: dict) -> Network:
 def build_layer(net: Network, frame: int, person: str, gt_pose, dets) -> list[int]:
     """Các nút của người `person` ở `frame`: 1 nút miss + các detection căn được."""
     ids = [net.add_node(kind="miss", person=person, frame=frame, body_id=-1,
-                        pa_mm=np.nan, residual=None)]
+                        pa_mm=np.nan, residual=None, e2d=np.nan)]
     for body_id, pose in dets:
         pa, res = procrustes(pose, gt_pose)
         if np.isfinite(pa):
             ids.append(net.add_node(kind="det", person=person, frame=frame,
-                                    body_id=int(body_id), pa_mm=pa * 1000.0, residual=res))
+                                    body_id=int(body_id), pa_mm=pa * 1000.0, residual=res,
+                                    e2d=np.nan))
     return ids
 
 
@@ -144,7 +201,8 @@ def connect(net: Network, prev: list[int], cur: list[int]):
 
 def build_person(net: Network, person: str, gt: dict, dets: dict):
     frames = sorted(f for f, people in gt.items() if person in people)
-    common = dict(person=person, frame=-1, body_id=-1, pa_mm=np.nan, residual=None)
+    common = dict(person=person, frame=-1, body_id=-1, pa_mm=np.nan, residual=None,
+                  e2d=np.nan)
     src = net.add_node(kind="source", **common)
     sink = net.add_node(kind="sink", **common)
     prev = None
@@ -179,6 +237,8 @@ def build_network(dets: dict, gt: dict, p: CostParams) -> Network:
 def nodes_frame(net: Network) -> pd.DataFrame:
     cols = ["id", "kind", "person", "frame", "body_id", "pa_mm"]
     df = pd.DataFrame([{c: n[c] for c in cols} for n in net.nodes])
+    if has_gt_2d(net):
+        df["e2d"] = node_e2d(net)
     df["cost"] = net.node_costs
     return df
 
@@ -191,6 +251,7 @@ def arcs_frame(net: Network, flow: np.ndarray | None = None) -> pd.DataFrame:
     df["person"] = [net.nodes[t]["person"] for t in net.tails]
     if len(arc_disp(net)) == len(df):
         df["disp_2d"] = arc_disp(net)
+    df["id_switch"] = arc_id_switch(net)
     df.insert(0, "id", range(len(df)))
     if flow is not None:
         df["flow"] = flow.astype(int)

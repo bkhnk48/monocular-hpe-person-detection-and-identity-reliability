@@ -22,6 +22,10 @@ Mỗi lần chạy:
 C_FN được cố định (mặc định 1.0): nhân mọi chi phí với cùng một số thì nghiệm không đổi.
 
 Cache luôn có độ dịch 2D (C_V) của mọi cung, nên quét được eta mà không dựng lại mạng.
+Cache có thêm sai số 2D so với GT (C_2D) của mọi nút detection khi sequence có GT 2D
+(wham_gt_mapping.resolve_gt_2d), nên quét được beta; quét beta > 0 mà còn sequence chưa
+có GT 2D thì dừng (require_gt_2d).
+C_ID (mu, đổi body_id) tính từ body_id có sẵn trên nút, nên quét mu không cần dựng lại cache.
 Cache dựng trước NET_VERSION hiện tại không được trộn vào: sequence còn trong manifest
 thì tự dựng lại; sequence chỉ còn trong sổ thì phải --exclude (hoặc đưa lại vào manifest).
 
@@ -31,6 +35,9 @@ Chạy từ thư mục gốc repo:
   python3 -m pose_assoc.tune --exclude mpi_S8_Seq1_cam8
   python3 -m pose_assoc.tune --grid alpha=0.5,1,2 --grid gamma=0,0.5
   python3 -m pose_assoc.tune --grid eta=0,0.25,0.5,1,2 --force
+  python3 -m pose_assoc.tune --grid beta=0,0.1,0.25,0.5,1 --force
+  python3 -m pose_assoc.tune --config configs/tuning/round_7.yaml --grid alpha=2 --grid c_fp=2.5 \
+      --grid gamma=0 --grid mu=0,0.5,1,2,4 --force     # chỉ quét mu, giữ các hệ số của round 7
 """
 
 from __future__ import annotations
@@ -51,15 +58,16 @@ import pandas as pd
 import yaml
 from scipy.ndimage import uniform_filter
 
-from .build_network import (OVERRIDES, REPO, is_skipped, load_inputs, load_params,
+from .build_network import (OVERRIDES, REPO, is_skipped, load_gt_2d, load_inputs, load_params,
                             load_positions, mapping_module)
 from .costs import CostParams
 from .evaluation import load_truth_by_person, require_truth_by_person
-from .network import apply_params, attach_positions, build_network
+from .network import apply_params, attach_gt_2d, attach_positions, build_network, has_gt_2d
 from .solvers.multi_mcf import solve_network
 
-# Tăng khi đại lượng thô lưu trong cache đổi. 2 = có arc_disp (độ dịch 2D, C_V).
-NET_VERSION = 2
+# Tăng khi đại lượng thô lưu trong cache đổi. 2 = có arc_disp (độ dịch 2D, C_V);
+# 3 = có thêm e2d của nút detection (sai số 2D so với GT, C_2D) khi sequence có GT 2D.
+NET_VERSION = 3
 TUNING_DIR = REPO / "configs" / "tuning"
 REGISTRY = TUNING_DIR / "registry.json"
 CACHE_DIR = REPO / "outputs" / "tuning" / "cache"
@@ -82,11 +90,18 @@ def seq_key(seq: dict) -> str:
     return f"local:{Path(seq['wham_pkl']).resolve()}"
 
 def gt_signature(seq: dict) -> str:
-    """Dấu vân tay nội dung GT, không phụ thuộc máy."""
+    """Dấu vân tay nội dung GT (cả GT 2D nếu có gt.path_2d), không phụ thuộc máy."""
     gt = seq["gt"]
-    if gt.get("path_is_drive"):
-        return f"{gt['type']}:drive:{gt['path']}"
-    p, h = Path(gt["path"]), hashlib.sha1(gt["type"].encode())
+    sig = path_signature(gt["path"], gt.get("path_is_drive"), gt["type"])
+    if gt.get("path_2d"):
+        sig += "|2d:" + path_signature(gt["path_2d"], gt.get("path_2d_is_drive"), "2d")
+    return sig
+
+
+def path_signature(path, is_drive: bool, salt: str) -> str:
+    if is_drive:
+        return f"{salt}:drive:{path}"
+    p, h = Path(path), hashlib.sha1(salt.encode())
     if p.is_dir():                      # harmony4d: tên + kích thước các tệp
         for f in sorted(p.rglob("*")):
             if f.is_file():
@@ -160,8 +175,15 @@ def node_status(net, truth: dict) -> np.ndarray:
 def prepare_sequence(mod, manifest: dict, seq: dict, base: CostParams) -> dict:
     dets, gt = load_inputs(mod, manifest, seq)
     net = build_network(dets, gt, base)
-    # luôn gắn độ dịch 2D (kể cả khi eta = 0) để các lần sau quét eta không phải dựng lại
-    apply_params(attach_positions(net, load_positions(mod, manifest, seq)), base)
+    det_uv = load_positions(mod, manifest, seq)
+    # luôn gắn độ dịch 2D (kể cả khi eta = 0) để các lần sau quét eta không phải dựng lại;
+    # sai số 2D so với GT (C_2D) thì gắn khi sequence có GT 2D, để quét được beta
+    attach_positions(net, det_uv)
+    if mod.resolve_gt_2d(seq) is not None:
+        attach_gt_2d(net, det_uv, load_gt_2d(mod, seq))
+    else:
+        print("    chưa có GT 2D (gt.path_2d) -> không quét được beta trên sequence này")
+    apply_params(net, base)
     truth = load_truth_by_person(seq["out_dir"] / "mapping_frames.csv")
     data = {"name": seq["name"], "net": net, "status": node_status(net, truth),
             "net_version": NET_VERSION}
@@ -195,7 +217,7 @@ def classify(seq: dict, key: str, reg: dict, test_keys: set) -> str:
 MESSAGES = {"new": "mới            -> dựng mạng",
             "changed": "NHÃN ĐÃ ĐỔI    -> dựng lại với nhãn mới",
             "gt_changed": "GT ĐÃ ĐỔI        -> dựng lại với GT mới",
-            "outdated": "MẠNG PHIÊN BẢN CŨ -> dựng lại (thêm độ dịch 2D)",
+            "outdated": "MẠNG PHIÊN BẢN CŨ -> dựng lại (thêm độ dịch 2D, sai số 2D so với GT)",
             "known": "ĐÃ CÓ (lần {r}) -> bỏ qua, dùng dữ liệu đã lưu",
             "excluded": "ĐÃ BỊ LOẠI     -> bỏ qua",
             "unlabeled": "chưa có mapping_frames.csv -> bỏ qua (gán nhãn trước)",
@@ -247,8 +269,8 @@ def warn_test_leak(manifest: dict, reg: dict):
 def load_cached(reg: dict) -> list[dict]:
     """Cache của mọi sequence chưa bị loại; dừng hẳn nếu có cache phiên bản mạng cũ.
 
-    Trộn mạng cũ (không có arc_disp) với mạng mới thì eta chỉ tác động lên một phần
-    dữ liệu mà không báo gì, nên không cho chạy tiếp.
+    Trộn mạng cũ (không có arc_disp, e2d) với mạng mới thì eta, beta chỉ tác động lên một
+    phần dữ liệu mà không báo gì, nên không cho chạy tiếp.
     """
     data, stale = [], []
     for key, e in reg["sequences"].items():
@@ -261,12 +283,27 @@ def load_cached(reg: dict) -> list[dict]:
         names = [d["name"] for d in stale]
         raise SystemExit(
             f"\n  {len(names)} sequence trong sổ đăng ký có cache dựng bằng mạng phiên bản cũ "
-            f"(chưa có độ dịch 2D), không trộn với mạng phiên bản {NET_VERSION}:\n"
+            f"(thiếu đại lượng thô mới), không trộn với mạng phiên bản {NET_VERSION}:\n"
             + "".join(f"    - {n}\n" for n in names)
             + "  Đưa chúng lại vào tập validation của manifest (kèm image_size) để dựng lại, "
             "hoặc loại khỏi sổ:\n"
             f"    python3 -m pose_assoc.tune --exclude {' '.join(names)}")
     return data
+
+
+def require_gt_2d(data: list[dict], grid: dict, base: CostParams):
+    """Quét beta > 0 thì mọi sequence phải có GT 2D; nếu không, beta chỉ tác động lên
+    một phần dữ liệu mà không báo gì."""
+    if not any(b > 0 for b in grid.get("beta", [base.beta])):
+        return
+    missing = [d["name"] for d in data if not has_gt_2d(d["net"])]
+    if missing:
+        raise SystemExit(
+            f"\n  beta > 0 nhưng {len(missing)} sequence chưa có GT 2D (C_2D):\n"
+            + "".join(f"    - {n}\n" for n in missing)
+            + "  Thêm \"path_2d\" vào mục gt của chúng trong manifest rồi chạy lại "
+            "(tune tự dựng lại khi GT đổi), hoặc loại khỏi sổ:\n"
+            f"    python3 -m pose_assoc.tune --exclude {' '.join(missing)}")
 
 # ============================================================
 # 3. QUÉT LƯỚI
@@ -328,11 +365,12 @@ def pick_stable(df: pd.DataFrame, grid: dict) -> pd.Series:
 
 
 def association_block(p: CostParams) -> dict:
-    return {"weights": {"pose": p.alpha, "temporal": p.gamma, "displacement": p.eta},
+    return {"weights": {"pose": p.alpha, "temporal": p.gamma, "displacement": p.eta,
+                        "reprojection": p.beta, "id_switch": p.mu},
             "costs": {"false_positive": p.c_fp, "false_negative": p.c_fn,
                       "disappear": p.c_disappear, "reappear": p.c_reappear},
             "scales": {"pose_mm": p.pose_scale_mm, "motion_m": p.motion_scale_m,
-                       "displacement": p.disp_scale},
+                       "displacement": p.disp_scale, "reprojection": p.reproj_scale},
             "boundary": {"start_detected": p.start_detected, "start_missed": p.start_missed,
                          "end_detected": p.end_detected, "end_missed": p.end_missed}}
 
@@ -354,8 +392,8 @@ def print_comparison(prev: dict | None, p: CostParams, best: pd.Series,
                      prev_now: dict | None, n_seq: int):
     print(f"\n  {'':<16}{'lần trước':>12}{'lần này':>12}")
     default = CostParams()
-    for name in ("alpha", "gamma", "eta", "c_fp", "c_disappear", "c_reappear"):
-        # các lần chỉnh trước khi có eta không lưu trường này -> giá trị mặc định (0)
+    for name in ("alpha", "gamma", "eta", "beta", "mu", "c_fp", "c_disappear", "c_reappear"):
+        # các lần chỉnh trước khi có eta, beta, mu không lưu trường đó -> giá trị mặc định (0)
         old = f"{prev['params'].get(name, getattr(default, name)):.3g}" if prev else "-"
         print(f"  {name:<16}{old:>12}{getattr(p, name):>12.3g}")
     old = f"{prev_now['score']:.2%}" if prev_now else "-"
@@ -422,6 +460,7 @@ def run_round(mod, manifest: dict, reg: dict, args) -> None:
     if not data:
         raise SystemExit("Chưa có sequence nào đủ điều kiện để hiệu chỉnh.")
     grid = parse_grid(args.grid)
+    require_gt_2d(data, grid, base)
     n_combo = int(np.prod([len(v) for v in grid.values()]))
     print(f"\n  Chỉnh trên {len(data)} sequence ({', '.join(d['name'] for d in data)}), "
           f"{n_combo} bộ hệ số, C_FN = {base.c_fn} cố định")

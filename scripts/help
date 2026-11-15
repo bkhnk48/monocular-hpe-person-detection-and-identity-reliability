@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""Hướng dẫn nhanh các quy trình chính của repo.
+
+  python3 scripts/help              in cả bốn phần
+  python3 scripts/help mapping      1. tạo mapping (gán nhãn body_id WHAM <-> người GT)
+  python3 scripts/help overlay      2. tạo video overlay 2 người
+  python3 scripts/help tune         3. hiệu chỉnh tham số trên tập validation
+  python3 scripts/help test         4. giải bài toán tối ưu trên tập test
+
+Chỉ dùng thư viện chuẩn. Trạng thái sequence và lần hiệu chỉnh mới nhất được đọc
+từ configs/splits.json và configs/tuning/ lúc chạy.
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+MANIFEST = REPO / "configs" / "splits.json"
+TUNING = REPO / "configs" / "tuning"
+SPLITS = ("validation", "test")
+
+
+# ------------------------------------------------------------------
+# Trạng thái đọc lúc chạy
+# ------------------------------------------------------------------
+
+def manifest_status():
+    """{split: [(tên, trạng thái)]}; trạng thái: 'skip', 'có mapping', 'chưa có mapping'."""
+    try:
+        m = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        base = (MANIFEST.parent / m.get("base_dir", ".")).resolve()
+        out_root = base / m["output_dir"]
+    except (OSError, ValueError, KeyError) as e:
+        return {"_error": str(e)}
+    status = {}
+    for split in SPLITS:
+        rows = []
+        for seq in m.get(split, []):
+            name = seq.get("name", "?")
+            if seq.get("skip") is True:
+                rows.append((name, "skip"))
+            elif (out_root / name / "mapping.txt").is_file():
+                rows.append((name, "có mapping"))
+            else:
+                rows.append((name, "chưa có mapping"))
+        status[split] = rows
+    return status
+
+
+def latest_round():
+    """(đường dẫn tương đối, score, số sequence) của round_<n>.yaml lớn nhất, hoặc None."""
+    rounds = []
+    for path in TUNING.glob("round_*.yaml"):
+        match = re.fullmatch(r"round_(\d+)\.yaml", path.name)
+        if match:
+            rounds.append((int(match.group(1)), path))
+    if not rounds:
+        return None
+    _, path = max(rounds)
+    text = path.read_text(encoding="utf-8")
+    score = re.search(r"^score:\s*([-\d.eE]+)", text, re.M)
+    block = re.search(r"^sequences:\n((?:- .*\n)+)", text, re.M)
+    n_seq = len(block.group(1).splitlines()) if block else None
+    return (str(path.relative_to(REPO)),
+            float(score.group(1)) if score else None, n_seq)
+
+
+def status_lines(status, splits=SPLITS):
+    if "_error" in status:
+        return [f"  (không đọc được configs/splits.json: {status['_error']})"]
+    lines = []
+    for split in splits:
+        for name, state in status.get(split, []):
+            lines.append(f"  {'[' + split + ']':<13}{name:<30} {state}")
+    return lines or ["  (manifest chưa có sequence nào)"]
+
+
+def config_arg():
+    r = latest_round()
+    return f"--config {r[0]}" if r else "--config configs/default.yaml"
+
+
+# ------------------------------------------------------------------
+# Nội dung
+# ------------------------------------------------------------------
+
+HEADER = """\
+HƯỚNG DẪN NHANH. Chạy mọi lệnh từ thư mục gốc repo (thư mục có README.md).
+Python 3.9: /usr/bin/python3. Chi tiết: README.md mục 10 và 10.1.
+
+  python3 scripts/help mapping   1. Tạo mapping (gán nhãn body_id WHAM <-> người GT)
+  python3 scripts/help overlay   2. Tạo video overlay 2 người từ MPI-INF-3DHP
+  python3 scripts/help tune      3. Hiệu chỉnh tham số trên tập validation
+  python3 scripts/help test      4. Giải bài toán tối ưu trên tập test
+"""
+
+
+def section_mapping():
+    status = manifest_status()
+    return "\n".join([
+        "1. TẠO MAPPING (gán nhãn body_id WHAM <-> người GT)",
+        "",
+        "Bước 1. Khai báo sequence trong configs/splits.json, mục \"validation\" hoặc \"test\":",
+        "    {",
+        "      \"name\": \"mpi_S8_Seq1_cam4\",",
+        "      \"wham_pkl\": \"<Drive file ID hoặc đường dẫn .pkl>\",",
+        "      \"gt\": {\"type\": \"mpi\", \"path\": \".../S8/annot.mat\", \"camera\": 4, \"person\": \"S8\"},",
+        "      \"output_wham_video\": \"\",",
+        "      \"image_size\": [2048, 2048],",
+        "      \"fps\": 25",
+        "    }",
+        "  gt.type: \"mpi\" (annot.mat), \"harmony4d\" (thư mục poses3d), \"mpi_overlay\" (overlay_meta.json),",
+        "           \"mpi_overlay_csv\" (gt_3d_scene.csv của video ghép; path có thể là Drive file ID).",
+        "  output_wham_video: video WHAM vẽ đè lên video gốc (output_*.mp4), đường dẫn hoặc Drive file ID",
+        "           (tải một lần vào outputs/mapping/<tên>/ khi ghép video); để trống nếu không có.",
+        "  image_size: [W, H] của video WHAM đã chạy; cần khi eta > 0.",
+        "  Đường dẫn tính từ base_dir của manifest. Thêm \"skip\": true để tạm bỏ qua một sequence.",
+        "",
+        "Bước 2. Xem trạng thái rồi gán nhãn:",
+        "    python3 scripts/wham_gt_mapping.py --list",
+        "    python3 scripts/wham_gt_mapping.py --split validation",
+        "    python3 scripts/wham_gt_mapping.py --split test --only <tên> --force",
+        "  Dòng thứ ba gán lại một sequence đã có mapping.",
+        "  Chương trình dựng video WHAM và GT chạy khớp frame, mở video, rồi hỏi từng body_id:",
+        "    1                       cả track là người số 1",
+        "    x  (hoặc Enter)         cả track không phải người GT",
+        "    1, 2@121-125 140        mặc định người 1; frame 121-125 và 140 là người 2",
+        "    [0-2]->2, [3-11]->1     liệt kê từng đoạn frame",
+        "    v / b / q               mở lại video / quay lại / thoát không lưu",
+        "  Thêm --no-open để không tự mở video, --rerender để vẽ lại video.",
+        "",
+        "Kết quả: outputs/mapping/<tên>/mapping.txt và mapping_frames.csv.",
+        "  Chỉ hai file này được commit (.gitignore bỏ qua phần còn lại):",
+        "    git add outputs/mapping/<tên>/mapping.txt outputs/mapping/<tên>/mapping_frames.csv",
+        "",
+        "Video ghép 2 người (gt.type = mpi_overlay) được gán nhãn tự động:",
+        "  xem `python3 scripts/help overlay`, bước 5.",
+        "",
+        "Gán tay với GT dạng CSV, không cần manifest, annot.mat hay video:",
+        "    python3 scripts/match_wham_subjects_to_gt.py --gt outputs/overlay/<tên> --wham <wham.pkl>",
+        "  Gợi ý theo vị trí 2D (pkl + gt_2d.csv); thiếu thì theo PA-MPJPE (có cảnh báo vòng lặp).",
+        "  Enter = nhận gợi ý; cú pháp như trên. Không hỏi: --yes, --assign \"5=X_S8, Y_S8@100-250\".",
+        "  Sửa thẳng mapping.txt rồi chạy lại với --yes để ghi lại mapping_frames.csv.",
+        "",
+        "Trạng thái hiện tại (configs/splits.json):",
+        *status_lines(status),
+    ])
+
+
+def section_overlay():
+    return """\
+2. TẠO VIDEO OVERLAY 2 NGƯỜI (MPI-INF-3DHP)
+
+X giữ cỡ gốc và đứng trước. Y được thu nhỏ hệ số s quanh tâm ảnh (--y-scale, mặc định 0.5)
+và đứng sau. Mỗi người là một đoạn frame START:END (không lấy END) của video nguồn
+.../<SUBJECT>/Seq<N>/imageSequences/video_cam<C>.avi. Bỏ --y-video thì Y lấy cùng video với X.
+
+Đặt biến cho gọn:
+    V=../WHAM/inputs/mpi_inf_3dhpe/S8/Seq1/imageSequences/video_cam0.avi
+
+Bước 1. Chọn đoạn có mức che phù hợp (chỉ đọc annot2, không ghép video):
+    python3 scripts/make_overlay_pair.py --x 0:6468 --y 0:6468 --x-video $V --frames 1500 --suggest
+  Nếu hai đoạn cùng dòng thời gian giao nhau hoặc cách nhau dưới --min-gap frame (mặc định 100),
+  lệnh sẽ từ chối. Thêm --allow-overlap nếu thật sự muốn dùng.
+
+Bước 2a. Ghép thẳng ra MP4 (không lưu PNG):
+    python3 scripts/make_overlay_pair.py --x 0:1500 --y 4750:6250 --x-video $V
+
+Bước 2b. Hoặc ghép qua PNG để sửa tay các frame lỗi:
+    python3 scripts/make_overlay_pair.py --x 0:1500 --y 4750:6250 --x-video $V --mode generate
+  Lệnh này ghi outputs/overlay/<tên>/frames_raw/000000.png, ... (~3 MB/frame, ~4.5 GB/1500 frame).
+  Lưu frame đã sửa vào outputs/overlay/<tên>/frames_edit/, dạng PNG, cùng tên, cùng kích thước,
+  rồi ghép lại:
+    python3 scripts/make_overlay_pair.py --mode render --name ovl_S8c0f0-1500_S8c0f4750-6250_s0.5
+
+  Cuối lệnh ghép in "Mặt nạ X/Y giữ ...% vùng quanh khung xương" (S8 ~60%). Nếu có cảnh báo
+  "⚠ Mặt nạ ... hụt" (thường do quần áo màu xanh lá), người đứng sau sẽ lộ ra đè lên người
+  đứng trước: xem mask_qa.jpg rồi thử tăng --min-chroma (mặc định 0.40).
+
+Bước 3. Kiểm tra mặt nạ ở các tư thế khó (ghi mask_qa.jpg). Có thể ghi lại GT cho clip đã có:
+    python3 scripts/make_overlay_pair.py --mask-qa outputs/overlay/<tên>
+    python3 scripts/make_overlay_pair.py --gt-only outputs/overlay/<tên>
+
+  Kết quả trong outputs/overlay/<tên>/:
+    composite.mp4, overlay_meta.json, overlay_frames.csv, preview/
+    gt_3d.csv        dùng cho PA-MPJPE
+    gt_3d_scene.csv  vị trí và khoảng cách trong cảnh
+    gt_2d.csv        khớp 2D trên ảnh ghép
+
+Bước 4. Chạy WHAM trên composite.mp4. Nếu truyền calib thì dùng calib của camera X.
+
+Bước 5. Thêm clip vào configs/splits.json, mục validation, với
+    "gt": {"type": "mpi_overlay", "path": ".../outputs/overlay/<tên>/overlay_meta.json"}
+  Sau đó gán nhãn tự động. Điền cột manual_person trong autolabel_audit.csv rồi chấm điểm:
+    python3 scripts/overlay_autolabel.py --seq <tên>
+    python3 scripts/overlay_autolabel.py --audit-score outputs/mapping/<tên>/autolabel_audit.csv
+
+Bước 6. So vị trí WHAM với GT trong cảnh:
+    python3 scripts/check_wham_camera.py --pkl <wham_output.pkl> --meta outputs/overlay/<tên>/overlay_meta.json --mapping outputs/mapping/<tên>/mapping_frames.csv
+
+Kiểm thử:
+    python3 -m pytest -q tests/test_overlay.py tests/test_overlay_render.py"""
+
+
+def section_tune():
+    r = latest_round()
+    if r:
+        score = f"score {r[1]:.4f}" if r[1] is not None else "chưa có score"
+        n_seq = f" trên {r[2]} sequence" if r[2] is not None else ""
+        latest = f"Lần mới nhất: {r[0]} ({score}{n_seq})."
+    else:
+        latest = "Chưa có lần hiệu chỉnh nào (configs/tuning/round_*.yaml)."
+    return f"""\
+3. HIỆU CHỈNH THAM SỐ (chỉ trên tập validation)
+
+Cần: các sequence validation đã có mapping_frames.csv (xem `python3 scripts/help mapping`).
+
+    python3 -m pose_assoc.tune --list
+    python3 -m pose_assoc.tune
+    python3 -m pose_assoc.tune --grid alpha=0.5,1,2 --grid gamma=0,0.25,0.5
+    python3 -m pose_assoc.tune --exclude mpi_S8_Seq1_cam8
+    python3 -m pose_assoc.tune --force
+  Lần lượt: xem sổ đăng ký và các lần đã chạy; chạy một lần hiệu chỉnh; tự chọn lưới;
+  loại một sequence (--include để dùng lại); chạy lại dù không có dữ liệu mới.
+
+Dữ liệu được tích luỹ qua các lần:
+  - Sequence mới được tính và lưu cache. Sequence đã có thì dùng lại cache.
+  - Sequence có nhãn thay đổi thì được tính lại.
+  - Sequence trùng với tập test bị từ chối.
+  - Sequence có "skip": true không được thêm hay cập nhật. Nếu đã đăng ký từ lần trước
+    thì dữ liệu đã lưu vẫn được dùng; muốn bỏ hẳn thì dùng --exclude <tên>.
+  Lưới được quét trên mọi sequence đã đăng ký, và tune chọn điểm ở giữa vùng ổn định.
+  C_FN cố định bằng 1.0.
+  Điểm mặc định là độ chính xác. Dùng --wrong-penalty λ để phạt gán nhầm người:
+  điểm = (đúng − λ·wrong_id)/N.
+
+Kết quả:
+  configs/tuning/round_<n>.yaml        bộ tham số, dùng được làm --config
+  outputs/tuning/round_<n>_results.csv
+  configs/tuning/registry.json         sổ đăng ký sequence
+{latest}
+
+Thử bộ tham số đó trên một sequence validation:
+    python3 -m pose_assoc.build_network --seq mpi_S8_Seq1_cam4 {config_arg()}"""
+
+
+def section_test():
+    status = manifest_status()
+    cfg = config_arg()
+    ready = [n for n, s in status.get("test", []) if s == "có mapping"]
+    per_seq = [f"    python3 -m pose_assoc.build_network --seq {n} {cfg}" for n in ready]
+    if not per_seq:
+        per_seq = [f"    python3 -m pose_assoc.build_network --seq <tên> {cfg}",
+                   "  (chưa có sequence test nào có mapping; chạy được nhưng không có điểm số)"]
+    return "\n".join([
+        "4. GIẢI BÀI TOÁN TỐI ƯU TRÊN TẬP TEST",
+        "",
+        "Nguyên tắc: chốt bộ tham số trên validation trước (`python3 scripts/help tune`).",
+        "Không dùng kết quả test để chọn hay chỉnh tham số. Chạy test chỉ để báo cáo.",
+        "",
+        "Từng sequence test đã có mapping (có chấm điểm):",
+        *per_seq,
+        "Cả tập (bỏ qua sequence có \"skip\": true; gọi đích danh --seq thì vẫn chạy):",
+        f"    python3 -m pose_assoc.build_network --split test {cfg}",
+        "So sánh MC-MCF (B4) với các baseline B6/B1/B2/B5/B5'/B3, ghi outputs/compare/test/table.csv:",
+        f"    python3 -m pose_assoc.compare --split test {cfg}",
+        "  B5 = B2 + majority vote theo body_id trong ±ω frame; đổi ω bằng --vote-window (mặc định 20, chọn trên validation với round 9).",
+        "  B5' = như B5 nhưng vote dọc chuỗi nối bằng độ dịch 2D: --link-threshold (τ, mặc định 1.0), --link-window (ω', mặc định 20).",
+        "  Round 7: --vote-window 160 --link-threshold 0.3 --link-window 320 (chọn trên validation).",
+        "  Ở compare, accuracy = correct/(correct+wrong_id+missed), khác accuracy của build_network",
+        "  ((correct+correct_miss)/(frame×người)); không so trực tiếp hai con số này.",
+        "",
+        "Tuỳ chọn:",
+        "  bỏ --config                     dùng tham số mặc định (configs/default.yaml)",
+        "  --alpha  (α, pose)  --gamma (γ, temporal)",
+        "  --c-fp  --c-fn  --c-disappear  --c-reappear",
+        "                                  ghi đè từng hệ số trong config",
+        "  --time-limit 300                giới hạn thời gian MILP (HiGHS), tính bằng giây",
+        "  --no-network-csv                không ghi nodes.csv, arcs.csv",
+        "  --out DIR                       thư mục kết quả (chỉ dùng với một --seq)",
+        "",
+        "Kết quả trong outputs/network/<tên>/:",
+        "  summary.json    kích thước mạng, tham số, hàm mục tiêu và điểm số",
+        "                  (điểm số chỉ có khi có mapping_frames.csv)",
+        "  assignment.csv  body_id được chọn cho mỗi (frame, người GT)",
+        "  nodes.csv, arcs.csv",
+        "  Chạy lại sẽ ghi đè thư mục này. Muốn giữ kết quả của từng config thì dùng --out.",
+        "",
+        "Trạng thái tập test:",
+        *status_lines(status, ("test",)),
+    ])
+
+
+SECTIONS = {
+    "mapping": section_mapping,
+    "overlay": section_overlay,
+    "tune": section_tune,
+    "test": section_test,
+}
+ALIASES = {"map": "mapping", "label": "mapping", "video": "overlay",
+           "tuning": "tune", "solve": "test"}
+RULE = "\n" + "-" * 78 + "\n"
+
+
+def main(argv):
+    if not argv:
+        print(HEADER + RULE + RULE.join(f() for f in SECTIONS.values()))
+        return 0
+    topic = argv[0].lower().lstrip("-")
+    if topic in ("h", "help"):
+        print(HEADER)
+        return 0
+    topic = ALIASES.get(topic, topic)
+    if topic not in SECTIONS:
+        print(f"Không có mục '{argv[0]}'.\n\n{HEADER}", file=sys.stderr)
+        return 2
+    print(SECTIONS[topic]())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

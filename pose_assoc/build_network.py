@@ -6,8 +6,10 @@ Dựng mạng time-expanded, giải min-cost flow (1 hay nhiều luồng) và ch
   - Ground Truth : annot.mat (MPI, theo camera/person trong manifest) hoặc poses3d/*.npy
   - hệ số        : configs/default.yaml, mục association (ghi đè bằng --alpha, --gamma, ...)
   - đáp án       : outputs/mapping/<seq>/mapping_frames.csv (nếu có thì chấm điểm)
-  - toạ độ ảnh   : outputs/mapping/<seq>/WHAM-2D.csv, chỉ khi eta > 0 (C_V; tự tạo từ pkl,
-                   cần "image_size" trong manifest)
+  - toạ độ ảnh   : outputs/mapping/<seq>/WHAM-2D.csv, chỉ khi eta > 0 hoặc beta > 0
+                   (tự tạo từ pkl, cần "image_size" trong manifest)
+  - GT 2D        : chỉ khi beta > 0 (C_2D): annot2 (mpi), gt_2d.csv (mpi_overlay) hoặc
+                   gt.path_2d trong manifest (wham_gt_mapping.resolve_gt_2d)
 
 Đầu ra (outputs/network/<seq>/):
   nodes.csv, arcs.csv   toàn bộ mạng (arcs.csv có cột flow = nghiệm)
@@ -19,6 +21,8 @@ Chạy từ thư mục gốc repo:
   python3 -m pose_assoc.build_network --split validation
   python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --alpha 1.5 --gamma 0.3
   python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --eta 0.5
+  python3 -m pose_assoc.build_network --seq mpi_S8_Seq1_cam0 --beta 0.5
+  python3 -m pose_assoc.build_network --seq h4d_041_grappling2_cam07 --mu 1
 
 --split bỏ qua sequence có "skip": true trong manifest; --seq gọi đích danh thì vẫn chạy.
 """
@@ -37,7 +41,8 @@ import yaml
 
 from .costs import LIMBS, CostParams
 from .evaluation import assignment_table, evaluate, load_truth_by_person, objective_breakdown
-from .network import apply_params, arcs_frame, attach_positions, build_network, nodes_frame
+from .network import (apply_params, arcs_frame, attach_gt_2d, attach_positions, build_network,
+                      nodes_frame)
 from .solvers.multi_mcf import solve_network
 
 REPO = Path(__file__).resolve().parent.parent
@@ -47,7 +52,8 @@ GT_LIMB_SLICE = {
     "mpi_overlay_csv": slice(2, 14),
 }
 OVERRIDES = {"alpha": "alpha", "gamma": "gamma", "c_fp": "c_fp", "c_fn": "c_fn",
-             "c_disappear": "c_disappear", "c_reappear": "c_reappear", "eta": "eta"}
+             "c_disappear": "c_disappear", "c_reappear": "c_reappear", "eta": "eta",
+             "beta": "beta", "mu": "mu"}
 
 
 def mapping_module():
@@ -126,6 +132,31 @@ def load_positions(mod, manifest: dict, seq: dict) -> dict:
     return positions_from_2d(mod.load_wham_2d(seq, manifest["smpl_model"]))
 
 
+def load_gt_2d(mod, seq: dict) -> dict:
+    """GT 2D trên ảnh cho C_2D: {(frame, người): (12, 2) px}, cùng thứ tự khớp LIMBS."""
+    src = mod.resolve_gt_2d(seq)
+    if src is None:
+        raise ValueError(f"Sequence '{seq['name']}' chưa có GT 2D cho C_2D (beta > 0): thêm "
+                         "\"path_2d\" vào mục gt của manifest (README mục 4.1).")
+    print(f"  Đọc GT 2D ({src['kind']}: {Path(src['path']).name}) ...")
+    return {(f, k): uv for f, people in mod.load_gt_2d(src).items() for k, uv in people.items()}
+
+
+def attach_image_evidence(net, mod, manifest: dict, seq: dict, params: CostParams):
+    """Gắn bằng chứng trên ảnh khi cần: độ dịch 2D (C_V, eta > 0) và sai số 2D so với
+    GT (C_2D, beta > 0), rồi tính lại chi phí. Cả hai bằng 0 thì không đọc gì, kết quả như cũ."""
+    if not (params.eta or params.beta):
+        return net
+    det_uv = load_positions(mod, manifest, seq)
+    if params.eta:
+        attach_positions(net, det_uv)
+    if params.beta:
+        attach_gt_2d(net, det_uv, load_gt_2d(mod, seq))
+        n_ok, n_det = net.gt_2d_coverage
+        print(f"  Sai số 2D so với GT: {n_ok}/{n_det} nút detection có đủ khớp")
+    return apply_params(net, params)
+
+
 def export(out: Path, net, flow, assign: pd.DataFrame, summary: dict, full: bool):
     out.mkdir(parents=True, exist_ok=True)
     if full:
@@ -148,8 +179,9 @@ def print_summary(s: dict):
         print(f"    HiGHS: {ms['status_name']} ({tag}), mip_gap {ms['mip_gap']}, "
               f"{ms['mip_node_count']} nút nhánh cận")
     o = s["objective"]
-    print(f"    pose {o['pose']:.3f} | FP {o['false_positive']:.3f} | FN {o['false_negative']:.3f}"
+    print(f"    pose {o['pose']:.3f} | 2D {o['reprojection']:.3f} | FP {o['false_positive']:.3f} | FN {o['false_negative']:.3f}"
           f" | thời gian {o['temporal_and_gaps']:.3f} | dịch 2D {o['displacement']:.3f}"
+          f" | đổi body_id {o['id_switch']:.3f} ({o['n_id_switches']} lần)"
           f" | biên {o['boundary']:.3f}")
     m = s.get("metrics")
     if m:
@@ -164,9 +196,7 @@ def run_sequence(mod, manifest: dict, seq: dict, args):
     print(f"\n=== {seq['name']} ===")
     dets, gt = load_inputs(mod, manifest, seq)
     params = load_params(args.config, args)
-    net = build_network(dets, gt, params)
-    if params.eta:          # C_V cần toạ độ ảnh; eta = 0 thì không đọc, kết quả như cũ
-        apply_params(attach_positions(net, load_positions(mod, manifest, seq)), params)
+    net = attach_image_evidence(build_network(dets, gt, params), mod, manifest, seq, params)
     flow, info = solve_network(net, args.time_limit)
     assign = assignment_table(net, flow)
     summary = {"sequence": seq["name"], "params": asdict(params), "solver": info,

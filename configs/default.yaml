@@ -55,6 +55,10 @@ association:
     temporal: 0.5
     # C_V: độ dịch 2D giữa 2 detection liên tiếp (eta); 0 = tắt, kết quả như cũ
     displacement: 0.0
+    # C_2D: sai số 2D giữa detection và người GT trên ảnh (beta); 0 = tắt, kết quả như cũ
+    reprojection: 0.0
+    # C_ID: phạt đổi body_id (ID tracker WHAM) giữa 2 detection liên tiếp (mu); 0 = tắt
+    id_switch: 0.0
 
   costs:
     false_positive: 0.8
@@ -67,6 +71,8 @@ association:
     motion_m: 0.05
     # s_V: độ dịch 2D tính theo cỡ người trên ảnh
     displacement: 0.05
+    # s_2D: sai số 2D so với GT tính theo cỡ người GT trên ảnh
+    reprojection: 0.05
 
   temporal:
     # chi phí temporal chia cho dt**gap_power, dt = số frame gốc giữa 2 lớp

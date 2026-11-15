@@ -1,0 +1,37 @@
+round: 8
+date: '2026-11-15T10:30:02'
+sequences:
+- mpi_S8_Seq1_cam0
+- mpi_S8_Seq1_cam8
+- mpi_S8_Seq1_cam7
+- mpi_S8_Seq1_cam6
+- mpi_S1_Seq1_cam8
+- mpi_S1_Seq1_cam1
+- mpi_S1_Seq1_cam0
+- mpi_S8_Seq1_cam4
+- mpi_S8_Seq1_S8c0f0_S8c0f4750_s0.5_cam0
+- mpi_S8c0f1500_S8c0f2750_s0.5_cam0
+wrong_penalty: 1.0
+score: 0.9967230055658629
+smoothed_score: 0.9911286472314144
+association:
+  weights:
+    pose: 1.5
+    temporal: 0.0
+    displacement: 0.0
+    reprojection: 0.25
+  costs:
+    false_positive: 5.0
+    false_negative: 1.0
+    disappear: 0.15
+    reappear: 0.2
+  scales:
+    pose_mm: 100.0
+    motion_m: 0.05
+    displacement: 0.05
+    reprojection: 0.05
+  boundary:
+    start_detected: 0.0
+    start_missed: 0.0
+    end_detected: 0.0
+    end_missed: 0.0

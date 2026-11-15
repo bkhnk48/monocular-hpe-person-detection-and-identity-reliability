@@ -12,6 +12,10 @@ Trạng thái mỗi (frame, người GT) trong evaluate():
   correct_miss : chọn missed và frame đó không có body_id nào của người đó
   wrong_id     : chọn một body_id KHÔNG phải người đó (người khác / không phải người)
   missed       : chọn missed trong khi có body_id đúng
+
+Chấm theo mức che (pose_assoc.compare, strata.csv): mỗi (frame, người GT) thuộc một tầng
+theo MaxIoU giữa khung 2D GT của người đó và khung của người GT khác cùng frame
+(occlusion_strata); stratified_rows() đếm lại các trạng thái trên trong từng tầng.
 """
 
 from __future__ import annotations
@@ -24,8 +28,9 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
-from .costs import CostParams, displacement_cost
-from .network import Network, arc_disp
+from .costs import (MIN_VALID_JOINTS, CostParams, displacement_cost, id_switch_cost,
+                    reprojection_cost)
+from .network import Network, arc_disp, arc_id_switch, has_gt_2d
 
 
 def _get(obj: Any, key: str, default=None):
@@ -199,6 +204,124 @@ def _global_identity_metrics(gt_units, predicted_units):
     }
 
 
+def _truth_index(truth: dict) -> dict:
+    """{(frame, người): {body_id}} từ nhãn {(frame, body_id): người hoặc None}.
+    Người được chuẩn hoá về chuỗi (CSV có thể đọc ra số)."""
+    index: dict = {}
+    for (frame, body_id), person in truth.items():
+        if person is not None:
+            index.setdefault((int(frame), str(person)), set()).add(body_id)
+    return index
+
+
+def unit_outcomes(net, assignment: dict, truth: dict) -> list[dict]:
+    """Kết quả của từng (frame, người GT) trong mạng, theo thứ tự frame.
+
+    status: correct / wrong_id / missed / correct_miss (như evaluate());
+    id_change: body_id được chọn khác detection được chọn liền trước của cùng người
+    (các frame missed bỏ qua). evaluate_assignment() và stratified_rows() cùng đếm từ đây.
+    """
+    id_to_node, _ = _node_maps(net)
+    index = _truth_index(truth)
+    previous, rows = {}, []
+    for frame, person in _evaluation_universe(net):
+        node_id = assignment.get((frame, person))
+        node = id_to_node.get(int(node_id)) if node_id is not None else None
+        body_id = _selected_body_id(node)
+        ids = index.get((frame, person), set())
+        row = {"frame": frame, "person": person, "body_id": body_id,
+               "gt_present": bool(ids), "pa_mm": np.nan, "id_change": False}
+        if body_id is None:
+            row["status"] = "missed" if ids else "correct_miss"
+        else:
+            row["pa_mm"] = _selected_pa_mm(node)
+            row["status"] = "correct" if body_id in ids else "wrong_id"
+            row["id_change"] = person in previous and previous[person] != body_id
+            previous[person] = body_id
+        rows.append(row)
+    return rows
+
+
+# Ngưỡng "che nặng" theo OCHuman (Zhang et al., CVPR 2019): MaxIoU > 0.5.
+HEAVY_IOU = 0.5
+STRATA = ("tách", "chồng", "chồng nặng", "không rõ")
+
+
+def joint_box(uv) -> tuple | None:
+    """Khung bao các khớp 2D hợp lệ (u0, v0, u1, v1); None nếu ít hơn 8 khớp."""
+    uv = np.asarray(uv, float)
+    ok = np.isfinite(uv).all(1)
+    if ok.sum() < MIN_VALID_JOINTS:
+        return None
+    pts = uv[ok]
+    return (*pts.min(0), *pts.max(0))
+
+
+def box_iou(a, b) -> float:
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    if w <= 0 or h <= 0:
+        return 0.0
+    inter = w * h
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return float(inter / union) if union > 0 else 0.0
+
+
+def stratum_of(max_iou: float, heavy_iou: float = HEAVY_IOU) -> str:
+    if not np.isfinite(max_iou):
+        return "không rõ"
+    if max_iou <= 0.0:
+        return "tách"
+    return "chồng nặng" if max_iou > heavy_iou else "chồng"
+
+
+def occlusion_strata(net, gt_uv: dict, heavy_iou: float = HEAVY_IOU) -> dict:
+    """Mức che của từng (frame, người GT) trong mạng, chỉ từ GT (không phụ thuộc phương pháp).
+
+    gt_uv: {(frame, người): (12, 2) px}. MaxIoU = IoU lớn nhất giữa khung bao 12 khớp GT 2D
+    của người đó và của người GT khác có mặt cùng frame (người duy nhất trong frame: 0).
+    Thiếu GT 2D của người đó hoặc của người kia thì MaxIoU = NaN (tầng "không rõ").
+    Trả về {(frame, người): (MaxIoU, tầng)}.
+    """
+    people_at: dict = defaultdict(list)
+    for frame, person in _evaluation_universe(net):
+        people_at[frame].append(person)
+    out = {}
+    for frame, people in people_at.items():
+        boxes = {p: joint_box(gt_uv[(frame, p)]) if (frame, p) in gt_uv else None
+                 for p in people}
+        for p in people:
+            others = [q for q in people if q != p]
+            if boxes[p] is None or any(boxes[q] is None for q in others):
+                m = float("nan")
+            else:
+                m = max((box_iou(boxes[p], boxes[q]) for q in others), default=0.0)
+            out[(frame, p)] = (m, stratum_of(m, heavy_iou))
+    return out
+
+
+def stratified_rows(net, assignment: dict, truth: dict, strata: dict,
+                    method: str = "", sequence: str = "") -> list[dict]:
+    """Đếm trạng thái của một phương pháp trong từng tầng che (cùng định nghĩa accuracy
+    với evaluate_assignment: correct / (correct + wrong_id + missed))."""
+    counts: dict = {}
+    for r in unit_outcomes(net, assignment, truth):
+        _, stratum = strata.get((r["frame"], r["person"]), (np.nan, "không rõ"))
+        c = counts.setdefault(stratum, {"n_units": 0, "correct": 0, "wrong_id": 0,
+                                        "missed": 0, "correct_miss": 0, "id_changes": 0})
+        c["n_units"] += 1
+        c[r["status"]] += 1
+        c["id_changes"] += int(r["id_change"])
+    rows = []
+    for stratum in STRATA:
+        if stratum in counts:
+            c = counts[stratum]
+            rows.append({"method": method, "sequence": sequence, "stratum": stratum, **c,
+                         "accuracy": _safe_div(c["correct"],
+                                               c["correct"] + c["wrong_id"] + c["missed"])})
+    return rows
+
+
 def evaluate_assignment(
     net,
     assignment: dict,
@@ -230,66 +353,15 @@ def evaluate_assignment(
     """
     solver_info = solver_info or {}
 
-    id_to_node, _ = _node_maps(net)
-    units = _evaluation_universe(net)
-
-    # truth có thể chứa person dạng int trong CSV, trong khi Network
-    # dùng string hoặc ngược lại. Chuẩn hóa về string để so sánh.
-    normalized_truth = {}
-    for (frame, body_id), person in truth.items():
-        normalized_truth[(int(frame), body_id)] = (
-            None if person is None else str(person)
-        )
-
-    correct = 0
-    wrong_id = 0
-    missed = 0
-    correct_miss = 0
-
-    selected_pa = []
-    predicted_units = {}
-    gt_units = {}
-
-    id_changes = 0
-    previous_body = {}
-
-    # Mỗi (frame, person) trong Network là một GT person-frame.
-    for frame, person in units:
-        node_id = assignment.get((frame, person))
-        node = id_to_node.get(int(node_id)) if node_id is not None else None
-
-        body_id = _selected_body_id(node)
-        person_truth_ids = {
-            b
-            for (f, b), p in normalized_truth.items()
-            if f == frame and p == person
-        }
-
-        gt_present = len(person_truth_ids) > 0
-        gt_units[(frame, person)] = gt_present
-        predicted_units[(frame, person)] = body_id
-
-        if body_id is None:
-            if gt_present:
-                missed += 1
-            else:
-                correct_miss += 1
-            continue
-
-        pa_mm = _selected_pa_mm(node)
-        if np.isfinite(pa_mm):
-            selected_pa.append(pa_mm)
-
-        if body_id in person_truth_ids:
-            correct += 1
-        else:
-            wrong_id += 1
-
-        # Đếm ID switch giữa các detection được chọn liên tiếp
-        # sau khi bỏ qua những frame miss.
-        if person in previous_body and previous_body[person] != body_id:
-            id_changes += 1
-        previous_body[person] = body_id
+    rows = unit_outcomes(net, assignment, truth)
+    status = [r["status"] for r in rows]
+    correct, wrong_id = status.count("correct"), status.count("wrong_id")
+    missed, correct_miss = status.count("missed"), status.count("correct_miss")
+    selected_pa = [r["pa_mm"] for r in rows
+                   if r["body_id"] is not None and np.isfinite(r["pa_mm"])]
+    id_changes = sum(r["id_change"] for r in rows)
+    gt_units = {(r["frame"], r["person"]): r["gt_present"] for r in rows}
+    predicted_units = {(r["frame"], r["person"]): r["body_id"] for r in rows}
 
     evaluated = correct + wrong_id + missed
     accuracy = _safe_div(correct, evaluated)
@@ -307,7 +379,7 @@ def evaluate_assignment(
     result = {
         "method": method,
         "sequence": sequence,
-        "n_units": len(units),
+        "n_units": len(rows),
         "correct": correct,
         "correct_miss": correct_miss,
         "wrong_id": wrong_id,
@@ -413,6 +485,11 @@ def objective_breakdown(net: Network, flow: np.ndarray, p: CostParams) -> dict:
     kinds = np.asarray(net.arc_kind)[flow == 1]
     arc_costs = np.asarray(net.arc_cost)[flow == 1]
     pose = sum(p.alpha * n["pa_mm"] / p.pose_scale_mm for n in dets)
+    # C_2D nằm trong chi phí nút detection, tách riêng khỏi pose (PA-MPJPE)
+    reprojection = 0.0
+    if p.beta and has_gt_2d(net):
+        e2d = np.array([n.get("e2d", np.nan) for n in dets], float)
+        reprojection = float(reprojection_cost(e2d, p).sum())
     n_fn = sum(n["kind"] == "miss" for n in used)
     # C_V nằm sẵn trong arc_cost của cung "dd": tách ra để không đếm hai lần
     disp = np.asarray(arc_disp(net), float)
@@ -421,11 +498,18 @@ def objective_breakdown(net: Network, flow: np.ndarray, p: CostParams) -> dict:
         on = (np.asarray(flow) == 1) & (np.asarray(net.arc_sub) == "dd")
         gap = np.asarray(net.__dict__.get("arc_gap") or np.ones(len(on)), float)
         displacement = float(displacement_cost(disp[on], p, gap[on]).sum())
+    # C_ID cũng nằm trong arc_cost của cung "dd": tách ra như C_V
+    switches = arc_id_switch(net)[np.asarray(flow) == 1]
+    id_switch = float(id_switch_cost(switches, p).sum()) if p.mu else 0.0
     return {"pose": pose,
+            "reprojection": reprojection,
             "false_positive": p.c_fp * (n_det_total - len(dets)),
             "false_negative": p.c_fn * n_fn,
-            "temporal_and_gaps": float(arc_costs[kinds == "move"].sum()) - displacement,
+            "temporal_and_gaps": (float(arc_costs[kinds == "move"].sum())
+                                  - displacement - id_switch),
             "displacement": displacement,
+            "id_switch": id_switch,
+            "n_id_switches": int(switches.sum()),
             "boundary": float(arc_costs[np.isin(kinds, ["start", "end"])].sum()),
             "n_detections": n_det_total, "n_used": len(dets), "n_missed": int(n_fn)}
 

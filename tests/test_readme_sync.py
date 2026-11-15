@@ -25,6 +25,8 @@ README = (ROOT / "README.md").read_text(encoding="utf-8")
 KEY_TO_FIELD = {
     "weights.pose": "alpha", "weights.temporal": "gamma",
     "weights.displacement": "eta", "scales.displacement": "disp_scale",
+    "weights.reprojection": "beta", "scales.reprojection": "reproj_scale",
+    "weights.id_switch": "mu",
     "costs.false_positive": "c_fp", "costs.false_negative": "c_fn",
     "costs.disappear": "c_disappear", "costs.reappear": "c_reappear",
     "scales.pose_mm": "pose_scale_mm", "scales.motion_m": "motion_scale_m",
