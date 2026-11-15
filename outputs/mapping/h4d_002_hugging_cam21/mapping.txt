@@ -5,5 +5,13 @@
 # 'id = người'          : cả track là người đó
 # 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
 # frame không có dòng gán = không phải người GT
-1 = aria02
-12 = aria01
+# NGUỒN: nhãn tay, sửa theo quy ước track trùng (2026-11-15): detection thuộc người GT mà nó nằm
+#        trên ảnh (poses2d Harmony4D), chỉ sửa khi E_2D tới người đó <= 0.5 lần tới người kia;
+#        quy ước cũ gán track trùng cho người bị che. Ảnh kiểm: outputs/visualizations/label_check/
+#        hugging_dup_4clips.png.
+#        Đã sửa: body 1: aria02 -> aria01 (21 frame, 95-169); body 12: aria01 -> aria02 (3 frame, 106-108).
+#        Nhãn sửa dựa một phần vào GT 2D: báo cáo riêng khi đánh giá C_2D (beta).
+1 = aria02 @ 0-94, 106-131, 137-164, 170-300
+1 = aria01 @ 95-105, 132-136, 165-169
+12 = aria02 @ 106-108
+12 = aria01 @ 109-171

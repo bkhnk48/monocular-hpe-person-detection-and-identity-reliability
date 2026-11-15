@@ -5,7 +5,16 @@
 # 'id = người'          : cả track là người đó
 # 'id = người @ frames' : chỉ các frame liệt kê (track bị nhảy người)
 # frame không có dòng gán = không phải người GT
-0 = aria02
-1 = aria01
+# NGUỒN: nhãn tay, sửa đoạn ôm 94-173 sau khi đối chiếu GT 2D (poses2d Harmony4D) và ảnh
+#        (outputs/visualizations/label_check/hugging_cam17.png), 2026-11-15:
+#        - 94-121, 167-173: WHAM đảo track (body 0 nằm trên aria01, body 1 trên aria02)
+#        - 122-166: cả hai track nằm trên aria01, aria02 bị che không có detection;
+#          body 0 sửa thành aria01, body 1 giữ nhãn tay aria01.
+#        Nhãn sửa dựa một phần vào GT 2D: báo cáo riêng clip này khi đánh giá C_2D (beta).
+#        Bản cũ: 0 = aria02, 1 = aria01 cho cả clip.
+0 = aria02 @ 0-93, 174-300
+0 = aria01 @ 94-173
+1 = aria01 @ 0-93, 122-166, 174-300
+1 = aria02 @ 94-121, 167-173
 # 2 = (không phải người GT)
 # 18 = (không phải người GT)
